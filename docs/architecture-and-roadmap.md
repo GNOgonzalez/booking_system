@@ -380,11 +380,32 @@ Deploy, calendar UI, Stripe (maybe), email, tests.
 | `can_cancel` | `Booking.can_cancel(user)` |
 | Booking creation | `create_booking()` in services — single entry point |
 | Membership | Separate model; gates features by plan/status |
+| Schema design | Domain-first Postgres; not shaped by SimplyBook/Sheets exports |
+| SimplyBook (future) | Integration adapter maps API → existing tables; optional `external_id` fields |
 
 ---
 
-## 10. What to read next
+## 10. External systems (SimplyBook) — future, not Phase 2
+
+**Principle:** Your Postgres schema is the **source of truth for your app**. SimplyBook (or any scheduler) is an **optional upstream** — never the template for table design.
+
+```text
+SimplyBook API  →  integrations/simplybook/  →  ClassSession, Booking, Profile
+                      (map + upsert)              (clean domain models)
+```
+
+**Phase 2–4:** No SimplyBook code. Models use proper types (`DateTimeField`, FKs, auto `id`).  
+**When the company needs sync:** Add a thin integration package; store `simplybook_*_id` on rows that came from sync; keep business rules in `services/`.
+
+Reflet’s clunky patterns (string dates, string PKs, duplicate Booking/Session rows from CSV) are **anti-patterns** for the new app — use Reflet for **features and rules**, not table layout. See [future-student-progress-app.md](./future-student-progress-app.md).
+
+---
+
+## 11. What to read next
 
 - [phase-0-reading.md](./phase-0-reading.md) — setup concepts
+- [phase-1-in-plain-english.md](./phase-1-in-plain-english.md) — auth recap
+- [phase-2-in-plain-english.md](./phase-2-in-plain-english.md) — booking slice (start here for Phase 2)
+- [phase-2-reading.md](./phase-2-reading.md) — Phase 2 concepts + Django doc links
 - [postgres-roles-membership-inheritance.md](./postgres-roles-membership-inheritance.md) — DB vs app terminology
 - [LEARNING_PATH.md](../LEARNING_PATH.md) — checklists and checkpoints

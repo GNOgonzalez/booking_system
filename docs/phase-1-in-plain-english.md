@@ -176,6 +176,9 @@ python manage.py runserver
 
 ## What's next — Phase 2
 
+- [phase-2-in-plain-english.md](./phase-2-in-plain-english.md) — what you're building
+- [phase-2-reading.md](./phase-2-reading.md) — concepts + links before you code
+
 Booking models (`ClassSession`, `Booking`), `services/booking.py`, forms, book/cancel flow.
 
 Same loop — new models, new views, new rules.
