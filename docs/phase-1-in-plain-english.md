@@ -25,26 +25,30 @@ Phase 1 = **ID badges + separate rooms for teachers and students.**
 
 ## What you added (file by file)
 
-| File | What it does now |
-|------|------------------|
-| `models.py` | `Profile` linked 1:1 to `User` |
-| `admin.py` | Manage Profiles + DemoItems |
-| `views.py` | `teacher_dashboard`, `student_dashboard` + guards |
-| `templates/registration/login.html` | Site login form |
-| `templates/scheduling/teacher_dashboard.html` | Teacher page |
-| `templates/scheduling/student_dashboard.html` | Student page |
-| `config/urls.py` | Routes URLs → views |
-| `config/settings.py` | `LOGIN_REDIRECT_URL` after login |
+
+| File                                          | What it does now                                  |
+| --------------------------------------------- | ------------------------------------------------- |
+| `models.py`                                   | `Profile` linked 1:1 to `User`                    |
+| `admin.py`                                    | Manage Profiles + DemoItems                       |
+| `views.py`                                    | `teacher_dashboard`, `student_dashboard` + guards |
+| `templates/registration/login.html`           | Site login form                                   |
+| `templates/scheduling/teacher_dashboard.html` | Teacher page                                      |
+| `templates/scheduling/student_dashboard.html` | Student page                                      |
+| `config/urls.py`                              | Routes URLs → views                               |
+| `config/settings.py`                          | `LOGIN_REDIRECT_URL` after login                  |
+
 
 ---
 
 ## Three "user" concepts (don't mix them)
 
-| Name | Layer | Example |
-|------|-------|---------|
-| `booking_user` | Postgres DB login | Django connects to DB |
-| Django `User` | App login | `gnogo`, test student |
-| `Profile` | Extra info | display name, timezone |
+
+| Name           | Layer             | Example                |
+| -------------- | ----------------- | ---------------------- |
+| `booking_user` | Postgres DB login | Django connects to DB  |
+| Django `User`  | App login         | `gnogo`, test student  |
+| `Profile`      | Extra info        | display name, timezone |
+
 
 **Groups** (`student`, `teacher`, `staff`) hang off Django `User` — not Profile.
 
@@ -123,10 +127,12 @@ Not the URL string — the **nickname** so URLs can change without breaking redi
 
 ## Settings vs views
 
-| Thing | Lives in | Example |
-|-------|----------|---------|
-| After login, go here | `settings.py` | `LOGIN_REDIRECT_URL` |
-| Wrong role on a page | `views.py` | `redirect("student_dashboard")` |
+
+| Thing                | Lives in      | Example                         |
+| -------------------- | ------------- | ------------------------------- |
+| After login, go here | `settings.py` | `LOGIN_REDIRECT_URL`            |
+| Wrong role on a page | `views.py`    | `redirect("student_dashboard")` |
+
 
 Login redirect happens **before** your dashboard view runs.
 
@@ -134,11 +140,13 @@ Login redirect happens **before** your dashboard view runs.
 
 ## Template paths cheat sheet
 
-| Page | `render(...)` path | File on disk |
-|------|-------------------|--------------|
-| Login | `registration/login.html` | `templates/registration/login.html` |
+
+| Page    | `render(...)` path                  | File on disk                                  |
+| ------- | ----------------------------------- | --------------------------------------------- |
+| Login   | `registration/login.html`           | `templates/registration/login.html`           |
 | Teacher | `scheduling/teacher_dashboard.html` | `templates/scheduling/teacher_dashboard.html` |
 | Student | `scheduling/student_dashboard.html` | `templates/scheduling/student_dashboard.html` |
+
 
 Login has no `scheduling/` prefix — Django auth convention.
 
@@ -146,13 +154,13 @@ Login has no `scheduling/` prefix — Django auth convention.
 
 ## Phase 1 wins checklist
 
-- [ ] Profile model + migration
-- [ ] Groups: student, teacher, staff
-- [ ] Site login at `/accounts/login/`
-- [ ] Teacher + student dashboards
-- [ ] Role checks in **views** (not just hidden links)
-- [ ] Test student user in admin
-- [ ] Checkpoint: student blocked from teacher dashboard (redirect)
+- [x] Profile model + migration
+- [x] Groups: student, teacher, staff
+- [x] Site login at `/accounts/login/`
+- [x] Teacher + student dashboards
+- [x] Role checks in **views** (not just hidden links)
+- [x] Test student user in admin
+- [x] Checkpoint: student blocked from teacher dashboard (redirect)
 
 ---
 
@@ -165,19 +173,18 @@ pwd   # must show booking_scheduling_app
 python manage.py runserver
 ```
 
-| URL | Expect |
-|-----|--------|
-| `/accounts/login/` | Login form |
+
+| URL                   | Expect                             |
+| --------------------- | ---------------------------------- |
+| `/accounts/login/`    | Login form                         |
 | `/teacher/dashboard/` | Teacher page (if in teacher group) |
 | `/student/dashboard/` | Student page (if in student group) |
-| `/admin/` | Django admin |
+| `/admin/`             | Django admin                       |
+
 
 ---
 
 ## What's next — Phase 2
-
-- [phase-2-in-plain-english.md](./phase-2-in-plain-english.md) — what you're building
-- [phase-2-reading.md](./phase-2-reading.md) — concepts + links before you code
 
 Booking models (`ClassSession`, `Booking`), `services/booking.py`, forms, book/cancel flow.
 

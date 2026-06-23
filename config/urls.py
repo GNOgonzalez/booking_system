@@ -23,4 +23,6 @@ urlpatterns = [
     path('accounts/', include('django.contrib.auth.urls')),
     path('teacher/dashboard/', views.teacher_dashboard, name='teacher_dashboard'),
     path('student/dashboard/', views.student_dashboard, name='student_dashboard'),
+    path('teacher/sessions/new/', views.teacher_create_session, name='teacher_create_session'),
+    path('student/sessions/<int:session_id/book', views.student_book_session, name='student_book_session'),
 ]

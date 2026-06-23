@@ -10,5 +10,10 @@
     <button type="submit">Log out</button>
   </form>
   
+  <form method="post" action="{% url 'student_book_session' 1 %}">
+    {% csrf_token %}
+    <button type="submit">Book session 1 (test)</button>
+  </form>
+  <p><a href="{% url 'student_dashboard' %}">Back to dashboard</a></p>
 </body>
 </html>

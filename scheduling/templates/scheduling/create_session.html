@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head><title>Create session</title></head>
+<body>
+  <h1>Create Session</h1>
+  {% if form.errors %}
+    <p>Cannot create session.</p>
+  {% endif %}
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Create session</button>
+  </form>
+
+  <p><a href="{% url 'teacher_dashboard' %}">Back to dashboard</a></p>
+</body>
+</html>

@@ -19,12 +19,13 @@ Read in order for a narrative, or jump to sections that feel unclear.
 | `services/booking.py` — `can_cancel` | ✅ | Lives in **service** (not model) — your choice |
 | `services/booking.py` — `cancel_booking` | ✅ | Updates one row + `save()` |
 | Shell testing | ✅ | Use real usernames (`kuma`), not `'your_student'` |
-| Teacher `ModelForm` + views | ⬜ | **Next session** |
-| Student list + book POST | ⬜ | |
+| Teacher `SessionForm` + `teacher_create_session` | ✅ | `forms.py`, view, `create_session.html`, URL |
+| Student book POST (practice view) | 🟡 | `student_book_session` started — **fix `session_id` bug** (see §0c) |
+| Student session list (proper UI) | ⬜ | Replace hardcoded `session 1` button |
 | Student my bookings + cancel POST | ⬜ | |
 | Mock `has_active_membership` in `can_book` | ⬜ | Optional stub when views work |
 
-**Checkpoint not done yet:** explain `create_booking()` without notes; book/cancel from the **browser**, not just shell/admin.
+**Checkpoint not done yet:** explain `create_booking()` without notes; book/cancel reliably from the **browser**; session list instead of test button.
 
 ---
 
@@ -51,6 +52,59 @@ exit()                          # leave shell
 import importlib; import scheduling.services.booking as b; importlib.reload(b)  # after editing booking.py
 User.objects.values_list('username', flat=True)   # find real usernames
 ```
+
+---
+
+## 0c. Concepts you learned (forms + views session)
+
+### Django forms
+
+- **`class Meta`** on `ModelForm` — inner config Django reads (`model`, `fields`); not called by you
+- **`fields = [...]`** — whitelist of columns on the HTML form; omit `teacher`, `status` (view sets those)
+- **`SessionForm(request.POST)`** — bind whole POST dict, not field-by-field args
+- **`form.is_valid()`** — field validation only; no DB write yet
+- **`form.save(commit=False)`** — returns model instance; set `teacher` / `status`; then `session.save()`
+- **`widgets`** + `datetime-local` — browser sends `2026-06-20T15:30`; use `format='%Y-%m-%dT%H:%M'`
+
+### Views — teacher create session
+
+- **GET** = open URL in browser → empty form (`else: form = SessionForm()`)
+- **POST** = submit → `SessionForm(request.POST)` → validate → save → **redirect**
+- One URL, two methods — branch on `request.method`
+- Template path in `render()` must **match filename**: `scheduling/create_session.html`
+
+### Views — student book (POST-only action)
+
+- **No ModelForm** — call `create_booking(request.user, session)` from service
+- **`@require_POST`** — book/cancel must not be GET links
+- **`get_object_or_404(Session, pk=session_id)`** — session id from URL, not `request.session`
+- **Two `if`s, two jobs:** (1) student group = authorization (2) `create_booking` True/False = business rules
+- **Import service:** `from scheduling.services.booking import create_booking`
+- Template: small POST form — `action="{% url 'student_book_session' session.id %}"` + csrf, no `{{ form.as_p }}`
+
+### Fix before book view works
+
+```python
+# ❌ wrong
+def student_book_session(request):
+    session = get_object_or_404(Session, pk=request.session_id)
+
+# ✅ correct — session_id comes from URL pattern <int:session_id>
+def student_book_session(request, session_id):
+    session = get_object_or_404(Session, pk=session_id)
+```
+
+Non-students should get **403**, not redirect to student dashboard.
+
+### Files you added/changed (step 5 + practice)
+
+| File | Purpose |
+|------|---------|
+| `scheduling/forms.py` | `SessionForm` |
+| `scheduling/views.py` | `teacher_create_session`, `student_book_session` |
+| `scheduling/templates/scheduling/create_session.html` | Teacher form page |
+| `scheduling/templates/scheduling/student_dashboard.html` | Test book button (session id `1`) |
+| `config/urls.py` | `teacher_create_session`, `student_book_session` |
 
 ---
 
@@ -164,8 +218,18 @@ Register models in `admin.py` before building custom pages — fastest way to sa
 
 ```text
 GET  → empty form
-POST → form.is_valid()? → form.save() → redirect
+POST → form.is_valid()? → save(commit=False) → set teacher/status → session.save() → redirect
 ```
+
+**You built:** `SessionForm`, `teacher_create_session`, `create_session.html`.
+
+**`class Meta` cheat sheet:**
+
+| Key | Meaning |
+|-----|---------|
+| `model = Session` | Which table this form maps to |
+| `fields = [...]` | Which columns appear as inputs |
+| `widgets = {...}` | HTML input types (e.g. `datetime-local`) |
 
 **Read:**
 
@@ -194,6 +258,27 @@ POST → form.is_valid()? → form.save() → redirect
 - [Request and response objects](https://docs.djangoproject.com/en/5.2/ref/request-response/)
 
 **Habit:** Book/cancel as small POST forms (button + `{% csrf_token %}`), not GET links — avoids accidental actions and matches logout pattern from Phase 1.
+
+**You started:** `student_book_session` + test button on student dashboard.
+
+**Calling a service from a view:**
+
+```python
+from scheduling.services.booking import create_booking
+
+success = create_booking(request.user, session)  # user + Session object, not id
+```
+
+**URL captures id → view argument:**
+
+```python
+# urls.py
+path('student/sessions/<int:session_id>/book/', ...)
+
+# views.py
+def student_book_session(request, session_id):
+    ...
+```
 
 ---
 
@@ -241,32 +326,36 @@ POST → form.is_valid()? → form.save() → redirect
 | 2 | `Booking` model | §2, §3 | ✅ |
 | 3 | `services/booking.py` | §4, §8 | ✅ |
 | 4 | Shell test `create_booking` / `cancel_booking` | §4, §5 | ✅ |
-| 5 | Teacher `ModelForm` | §6 | ⬜ **start here** |
-| 6 | Student list + book POST | §5, §7 | ⬜ |
-| 7 | Student cancel POST | §4, §7 | ⬜ |
-| 8 | Mock membership in `can_book` | §9 | ⬜ |
+| 5 | Teacher `ModelForm` + view + template | §6 | ✅ |
+| 6 | Student book POST view | §7, §0c | 🟡 fix `session_id` |
+| 7 | Student session list (real UI) | §5, §7 | ⬜ **start here** |
+| 8 | Student my bookings + cancel POST | §4, §7 | ⬜ |
+| 9 | Mock membership in `can_book` | §9 | ⬜ |
 
-### Next session — views & forms (read §5–§7 before coding)
+### Next session (read §5, §7, §0c)
 
-1. Create `scheduling/forms.py` — `SessionForm` (`ModelForm` for `title`, `start_time`, `end_time`, `capacity`)
-2. Teacher view: create session (`GET` form, `POST` save, set `teacher=request.user`)
-3. Student view: list open future sessions
-4. Student view: `POST` book → `create_booking(request.user, session)`
-5. Student view: my bookings + `POST` cancel → `cancel_booking(request.user, booking)`
-6. Wire URLs in `config/urls.py`; add links on dashboards
-7. Templates: plain HTML + `{% csrf_token %}` on every POST form
+1. **Fix** `student_book_session(request, session_id)` — use `pk=session_id`; 403 for non-students
+2. **Student session list** — GET open future sessions; Book button per row (not hardcoded id `1`)
+3. **`student_cancel_booking`** — POST → `cancel_booking(request.user, booking)`
+4. **My bookings page** — list confirmed bookings + Cancel buttons
+5. Optional: Django **messages** for “Booked!” / “Session full”
+6. Optional: link on teacher dashboard → create session
 
 ---
 
 ## 12. Self-check questions
 
 1. What's the difference between `ClassSession` and `Booking`?
-2. Why does `can_book` live in `services/` but `can_cancel` partly lives on the model?
+2. Why does `can_book` live in `services/` but `can_cancel` live in your service?
 3. Why should views call `create_booking()` instead of creating a `Booking` directly?
 4. What checks belong in `can_book` vs in the view?
 5. Why use POST for book/cancel instead of a GET link?
 6. What is mock membership preparing you for in Phase 4?
 7. What happens when capacity is 1 and two students book at once? (Even a hand-wavy answer counts.)
+8. What is `class Meta` on a ModelForm?
+9. Why `form.save(commit=False)` before setting `teacher`?
+10. What's the difference between `request.session` and `session_id` in the book URL?
+11. Why two different `if` checks in `student_book_session` (group vs `create_booking`)?
 
 ---
 
