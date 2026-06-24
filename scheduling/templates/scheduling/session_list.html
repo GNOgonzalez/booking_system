@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>Open sessions</title></head>
+<body>
+  <h1>Open sessions</h1>
+
+  {% for session in sessions %}
+    <p>
+      <strong>{{ session.title }}</strong>
+      — {{ session.start_time }}
+      (seats: {{ session.capacity }})
+    </p>
+    <form method="post" action="{% url 'student_book_session' session.id %}">
+      {% csrf_token %}
+      <button type="submit">Book</button>
+    </form>
+  {% empty %}
+    <p>No open sessions right now.</p>
+  {% endfor %}
+
+  <p><a href="{% url 'student_dashboard' %}">Back to dashboard</a></p>
+</body>
+</html>

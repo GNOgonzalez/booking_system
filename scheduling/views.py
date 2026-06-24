@@ -5,6 +5,7 @@ from scheduling.forms import SessionForm
 from scheduling.models import Session
 from scheduling.services.booking import create_booking
 from django.views.decorators.http import require_POST
+from django.utils import timezone
 
 @login_required
 def teacher_dashboard(request):
@@ -63,3 +64,13 @@ def student_book_session(request, session_id):
             return redirect("student_dashboard")
     else:
         return HttpResponseForbidden("You don't have access to this page.")
+
+@login_required
+def student_session_list(request):
+    user = request.user
+    if not user.groups.filter(name="student").exists():
+        return HttpResponseForbidden("You don't have access to this page.")
+
+    sessions = Session.objects.filter(status='open', start_time__gte=timezone.now(),)
+
+    return render(request, "scheduling/session_list.html", {"sessions": sessions})

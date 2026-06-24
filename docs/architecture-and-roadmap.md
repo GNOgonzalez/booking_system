@@ -382,6 +382,8 @@ Deploy, calendar UI, Stripe (maybe), email, tests.
 | Membership | Separate model; gates features by plan/status |
 | Schema design | Domain-first Postgres; not shaped by SimplyBook/Sheets exports |
 | SimplyBook (future) | Integration adapter maps API → existing tables; optional `external_id` fields |
+| Phase 2 booking UX | **Teaching slice:** teacher creates `Session` directly; refactor in Phase 3–4 |
+| Target booking UX | Availability + class catalog → student picks slot + class → group session (see §11) |
 
 ---
 
@@ -401,7 +403,55 @@ Reflet’s clunky patterns (string dates, string PKs, duplicate Booking/Session 
 
 ---
 
-## 11. What to read next
+## 11. Target product flow (future — refactor from Phase 2)
+
+**Phase 2 today (learning):** teacher manually creates a `Session` → student books it.  
+**Target product:** teacher sets **availability + class catalog** → student books **slot + class type** → group class forms dynamically.
+
+This is intentional. Phase 2 teaches models, services, forms, and views. Phase 3–4 reshape **who creates sessions** and **what `can_book` checks**. `Booking` and `services/booking.py` carry forward; teacher create-session form is replaced later.
+
+### Target user flow
+
+```text
+TEACHER SETUP
+  AvailabilityBlock     when they're generally free (Phase 3)
+  ClassType / Service   classes they teach e.g. Piano, Guitar (Phase 3–4)
+
+STUDENT BOOKS
+  Student picks: class type + time slot (must fit availability + membership)
+       ↓
+  create_booking() checks membership, availability, duplicates, capacity
+       ↓
+  If no Session exists for that slot yet:
+    CREATE Session (open, teacher, class type, capacity)
+  CREATE Booking (student, session, confirmed)
+
+OTHER STUDENTS (same membership / plan)
+  See open Session → join with another Booking (same Session row)
+
+CANCEL RULES
+  One student cancels → Booking cancelled; Session stays if others remain
+  All students cancel  → Session cancelled or slot reopens (availability)
+```
+
+### Phase 2 code → target mapping
+
+| Phase 2 (now) | Target (later) | Refactor when |
+|---------------|----------------|---------------|
+| Teacher `SessionForm` | Teacher availability + class catalog UI | Phase 3–4 |
+| Student lists `Session` rows | Student lists **slots** from availability | Phase 3 |
+| `can_book` (group, open, capacity) | + membership plan, class type, availability window | Phase 4 |
+| `create_booking` | Same entry point; richer checks inside | Phase 3–4 |
+| `cancel_booking` | + reopen slot when last booking cancelled | Phase 4+ |
+| `Session` model | Same table; often **created by first booking**, not teacher form | Phase 3 |
+
+### Open design decision (defer until Phase 3)
+
+When the first student books, create the `Session` row at booking time (**Option A**) vs pre-generate empty sessions from availability (**Option B**). Current leaning: **Option A** (session born on first booking).
+
+---
+
+## 12. What to read next
 
 - [phase-0-reading.md](./phase-0-reading.md) — setup concepts
 - [phase-1-in-plain-english.md](./phase-1-in-plain-english.md) — auth recap
