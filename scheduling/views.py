@@ -73,4 +73,15 @@ def student_session_list(request):
 
     sessions = Session.objects.filter(status='open', start_time__gte=timezone.now(),)
 
-    return render(request, "scheduling/session_list.html", {"sessions": sessions})
+    return render(request, "scheduling/student_session_list.html", {"sessions": sessions})
+
+@login_required
+def teacher_session_list(request):
+    user = request.user
+    if not user.groups.filter(name="teacher").exists():
+        return HttpResponseForbidden("You don't have access to this page.")
+
+    sessions = Session.objects.all()
+    my_sessions = sessions.filter(teacher=user)
+    
+    return render(request, "scheduling/teacher_session_list.html", {"sessions": my_sessions})

@@ -9,6 +9,8 @@
     {% csrf_token %}
     <button type="submit">Log out</button>
   </form>
+  <p><a href="{% url 'teacher_create_session' %}">Create a new session</a></p>
+  <p><a href="{% url 'teacher_session_list' %}">My Sessions</a></p>
   
 </body>
 </html>
