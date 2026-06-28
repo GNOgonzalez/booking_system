@@ -27,4 +27,5 @@ urlpatterns = [
     path('student/sessions/<int:session_id>/book/', views.student_book_session, name='student_book_session'),
     path('student/sessions/', views.student_session_list, name='student_session_list'),
     path('teacher/sessions/', views.teacher_session_list, name='teacher_session_list'),
+    path('student/bookings/', views.student_booking_list, name='student_booking_list'),
 ]

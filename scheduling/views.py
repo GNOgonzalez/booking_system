@@ -2,7 +2,7 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponseForbidden
 from scheduling.forms import SessionForm
-from scheduling.models import Session
+from scheduling.models import Session, Booking
 from scheduling.services.booking import create_booking
 from django.views.decorators.http import require_POST
 from django.utils import timezone
@@ -85,3 +85,13 @@ def teacher_session_list(request):
     my_sessions = sessions.filter(teacher=user)
     
     return render(request, "scheduling/teacher_session_list.html", {"sessions": my_sessions})
+
+@login_required
+def student_booking_list(request):
+    user = request.user
+    if not user.groups.filter(name="student").exists():
+        return HttpResponseForbidden("You don't have access to this page.")
+
+    bookings = Booking.objects.filter(student=user, status='confirmed')
+
+    return render(request, "scheduling/student_booking_list.html", {"bookings": bookings})

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><title>Bookings</title></head>
+<body>
+  <h1>Bookings</h1>
+
+  {% for booking in bookings %}
+  <p>
+    {{ booking.session.title }}
+    — {{ booking.session.start_time }}
+    ({{ booking.status }})
+  </p>
+{% empty %}
+  <p>No bookings yet.</p>
+{% endfor %}
+  <p><a href="{% url 'student_dashboard' %}">Back to dashboard</a></p>
+</body>
+</html>
