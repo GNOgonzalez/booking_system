@@ -1,18 +1,29 @@
-<!DOCTYPE html>
-<html>
-<head><title>Bookings</title></head>
-<body>
-  <h1>Bookings</h1>
+{% extends "scheduling/base.html" %}
 
+{% block title %}My Bookings{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'student_dashboard' %}">Dashboard</a>
+  | <a href="{% url 'student_session_list' %}">Open sessions</a>
+{% endblock %}
+
+{% block content %}
+  <h1>My bookings</h1>
   {% for booking in bookings %}
-  <p>
-    {{ booking.session.title }}
-    — {{ booking.session.start_time }}
-    ({{ booking.status }})
-  </p>
-{% empty %}
-  <p>No bookings yet.</p>
-{% endfor %}
-  <p><a href="{% url 'student_dashboard' %}">Back to dashboard</a></p>
-</body>
-</html>
+    <p>
+      <strong>{{ booking.session.title }}</strong>
+      — {{ booking.session.start_time }}
+      ({{ booking.status }})
+      {% if booking.session.meeting_url %}
+        — <a href="{{ booking.session.meeting_url }}" target="_blank">Join</a>
+      {% endif %}
+      — <a href="{% url 'booking_calendar' booking.id %}">Add to calendar</a>
+    </p>
+    <form method="post" action="{% url 'student_cancel_booking' booking.id %}">
+      {% csrf_token %}
+      <button type="submit">Cancel</button>
+    </form>
+  {% empty %}
+    <p>No bookings yet.</p>
+  {% endfor %}
+{% endblock %}

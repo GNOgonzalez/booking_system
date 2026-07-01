@@ -1,16 +1,29 @@
-<!DOCTYPE html>
-<html>
-<head><title>Teacher Dashboard</title></head>
-<body>
+{% extends "scheduling/base.html" %}
+
+{% block title %}Teacher Dashboard{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'teacher_dashboard' %}">Dashboard</a>
+  | <a href="{% url 'teacher_create_session' %}">New session</a>
+  | <a href="{% url 'teacher_session_list' %}">My sessions</a>
+  | <a href="{% url 'teacher_availability_list' %}">Availability</a>
+  | <a href="{% url 'teacher_class_type_list' %}">Class types</a>
+  | <a href="{% url 'progress_teacher' %}">Progress</a>
+  | <a href="{% url 'inbox' %}">Inbox</a>
+  | <a href="{% url 'curriculum_list' %}">Curriculum</a>
+{% endblock %}
+
+{% block content %}
   <h1>Teacher Dashboard</h1>
   <p>Welcome, {{ user.username }}.</p>
-
-  <form method="post" action="{% url 'logout' %}">
-    {% csrf_token %}
-    <button type="submit">Log out</button>
-  </form>
-  <p><a href="{% url 'teacher_create_session' %}">Create a new session</a></p>
-  <p><a href="{% url 'teacher_session_list' %}">My Sessions</a></p>
-  
-</body>
-</html>
+  <ul>
+    <li><a href="{% url 'teacher_create_session' %}">Create a session</a></li>
+    <li><a href="{% url 'teacher_session_list' %}">My sessions</a></li>
+    <li><a href="{% url 'teacher_availability_list' %}">Manage availability</a></li>
+    <li><a href="{% url 'teacher_class_type_list' %}">Manage class types</a></li>
+    <li><a href="{% url 'progress_teacher' %}">Student progress</a></li>
+    <li><a href="{% url 'inbox' %}">Inbox</a></li>
+    <li><a href="{% url 'curriculum_list' %}">Curriculum</a></li>
+  </ul>
+  <p class="meta">React UI: <a href="http://127.0.0.1:5173" target="_blank">Open frontend</a></p>
+{% endblock %}

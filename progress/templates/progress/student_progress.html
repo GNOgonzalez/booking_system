@@ -1,0 +1,21 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}My Progress{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'student_dashboard' %}">Dashboard</a>
+{% endblock %}
+
+{% block content %}
+  <h1>My progress</h1>
+  {% for report in reports %}
+    <div class="card">
+      <strong>{{ report.rating }}/5</strong>
+      {% if report.skill %} — {{ report.skill.name }}{% endif %}
+      <p class="meta">by {{ report.teacher.username }} on {{ report.created_at }}</p>
+      {% if report.note %}<p>{{ report.note }}</p>{% endif %}
+    </div>
+  {% empty %}
+    <p>No progress reports yet.</p>
+  {% endfor %}
+{% endblock %}

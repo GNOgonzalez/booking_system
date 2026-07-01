@@ -1,16 +1,27 @@
-<!DOCTYPE html>
-<html>
-<head><title>Student Dashboard</title></head>
-<body>
+{% extends "scheduling/base.html" %}
+
+{% block title %}Student Dashboard{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'student_dashboard' %}">Dashboard</a>
+  | <a href="{% url 'student_session_list' %}">Open sessions</a>
+  | <a href="{% url 'student_booking_list' %}">My bookings</a>
+  | <a href="{% url 'membership_page' %}">Membership</a>
+  | <a href="{% url 'progress_student' %}">Progress</a>
+  | <a href="{% url 'inbox' %}">Inbox</a>
+  | <a href="{% url 'curriculum_list' %}">Curriculum</a>
+{% endblock %}
+
+{% block content %}
   <h1>Student Dashboard</h1>
   <p>Welcome, {{ user.username }}.</p>
-
-  <form method="post" action="{% url 'logout' %}">
-    {% csrf_token %}
-    <button type="submit">Log out</button>
-  </form>
-  
-  <p><a href="{% url 'student_session_list' %}">Open sessions</a></p>
-  <p><a href="{% url 'student_booking_list' %}">My bookings</a></p>
-</body>
-</html>
+  <ul>
+    <li><a href="{% url 'student_session_list' %}">Browse open sessions</a></li>
+    <li><a href="{% url 'student_booking_list' %}">My bookings</a></li>
+    <li><a href="{% url 'membership_page' %}">Membership</a></li>
+    <li><a href="{% url 'progress_student' %}">My progress</a></li>
+    <li><a href="{% url 'inbox' %}">Inbox</a></li>
+    <li><a href="{% url 'curriculum_list' %}">Curriculum</a></li>
+  </ul>
+  <p class="meta">React UI: <a href="http://127.0.0.1:5173" target="_blank">Open frontend</a></p>
+{% endblock %}

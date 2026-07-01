@@ -1,0 +1,29 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}Class Types{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'teacher_dashboard' %}">Dashboard</a>
+{% endblock %}
+
+{% block content %}
+  <h1>Class types</h1>
+
+  <h2>Add class type</h2>
+  <form method="post" action="{% url 'teacher_class_type_create' %}">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Add class type</button>
+  </form>
+
+  <h2>Your catalog</h2>
+  {% for class_type in class_types %}
+    <p>
+      <strong>{{ class_type.name }}</strong>
+      — capacity {{ class_type.default_capacity }}
+      {% if class_type.is_active %}(active){% else %}(inactive){% endif %}
+    </p>
+  {% empty %}
+    <p>No class types yet.</p>
+  {% endfor %}
+{% endblock %}

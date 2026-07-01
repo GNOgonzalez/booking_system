@@ -1,20 +1,21 @@
-<!DOCTYPE html>
-<html>
-<head><title>My sessions</title></head>
-<body>
-  <h1>My sessions</h1>
+{% extends "scheduling/base.html" %}
 
+{% block title %}My Sessions{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'teacher_dashboard' %}">Dashboard</a>
+  | <a href="{% url 'teacher_create_session' %}">New session</a>
+{% endblock %}
+
+{% block content %}
+  <h1>My sessions</h1>
   {% for session in sessions %}
     <p>
       <strong>{{ session.title }}</strong>
       — {{ session.start_time }}
-      - {{ session.status }}
-      (seats: {{ session.capacity }})
+      ({{ session.status }}, seats: {{ session.capacity }})
     </p>
   {% empty %}
-    <p>No sessions right now.</p>
+    <p>No sessions yet.</p>
   {% endfor %}
-
-  <p><a href="{% url 'teacher_dashboard' %}">Back to dashboard</a></p>
-</body>
-</html>
+{% endblock %}

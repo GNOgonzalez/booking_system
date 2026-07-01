@@ -3,16 +3,38 @@ LEARNING_PATH.md
 
 # Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 
-# Secrets — never commit
+# Secrets — never commit (but keep the example template)
 .env
+.env.*
+!.env.example
 
-# Django (you'll have these later)
+# Django
 *.sqlite3
 db.sqlite3
+*.log
 
-# OS
+# Testing / linting / type-checking caches
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Deploy / build
+staticfiles/
+
+# OS / editor
 .DS_Store
+Thumbs.db
+.idea/

@@ -1,0 +1,21 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}Inbox{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'home' %}">Home</a>
+{% endblock %}
+
+{% block content %}
+  <h1>Inbox</h1>
+  {% for msg in messages_list %}
+    <p>
+      {% if not msg.is_read %}<strong>{% endif %}
+      <a href="{% url 'message_detail' msg.id %}">{{ msg.subject }}</a>
+      {% if not msg.is_read %}</strong>{% endif %}
+      <span class="meta">from {{ msg.sender.username }} — {{ msg.created_at }}</span>
+    </p>
+  {% empty %}
+    <p>No messages.</p>
+  {% endfor %}
+{% endblock %}

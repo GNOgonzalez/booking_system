@@ -1,0 +1,30 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}Student Progress{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'teacher_dashboard' %}">Dashboard</a>
+{% endblock %}
+
+{% block content %}
+  <h1>Student progress</h1>
+
+  <h2>Add a report</h2>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Save report</button>
+  </form>
+
+  <h2>Reports you wrote</h2>
+  {% for report in reports %}
+    <div class="card">
+      <strong>{{ report.student.username }}</strong> — {{ report.rating }}/5
+      {% if report.skill %} ({{ report.skill.name }}){% endif %}
+      <p class="meta">{{ report.created_at }}</p>
+      {% if report.note %}<p>{{ report.note }}</p>{% endif %}
+    </div>
+  {% empty %}
+    <p>No reports yet.</p>
+  {% endfor %}
+{% endblock %}

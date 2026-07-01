@@ -362,9 +362,28 @@ booking_scheduling_app/
 
 ---
 
-### Phase 6 — Polish
+### Phase 6 — Polish ✅ (sandbox)
 
-Deploy, calendar UI, Stripe (maybe), email, tests.
+| Delivered | Where |
+|-----------|-------|
+| Email notifications (booking/cancel/receipt) | `scheduling/services/notifications.py` (console backend in dev) |
+| Calendar `.ics` export | `scheduling/services/calendar.py` + `/student/bookings/<id>/calendar.ics` |
+| Mock Stripe membership purchase | `scheduling/services/payments.py` (real Stripe when `STRIPE_SECRET_KEY` set) |
+| Tests | `scheduling/tests.py` (SQLite test DB via settings) |
+| Deploy config | env-driven `settings.py`, WhiteNoise, `gunicorn`, `Procfile`, `Dockerfile`, `docker-compose.yml`, `.env.example` |
+
+---
+
+### Beyond — deferred items delivered as scaffolds ✅
+
+| Item | Where | Status |
+|------|-------|--------|
+| Google Meet on session create | `integrations/google/meet.py` | Placeholder link now; real Calendar API behind `GOOGLE_*` env |
+| SimplyBook adapter | `integrations/simplybook/` + `manage.py sync_simplybook` | Inert until `SIMPLYBOOK_API_KEY` set; `external_id` fields on models |
+| Full React migration | `frontend/src/pages/` | All pages: sessions, bookings, membership, progress, availability, class types, create session, inbox, curriculum |
+| Student progress app | `progress/` | Models, services, HTML views, DRF API (`/api/progress/`) |
+
+**Still real-credential work (not sandbox):** Google OAuth consent flow + token storage, live Stripe webhooks, production hosting/DNS, real SimplyBook API calls.
 
 ---
 

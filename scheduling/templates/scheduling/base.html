@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Booking App{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    nav { margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; }
+    .messages { list-style: none; padding: 0; }
+    .messages li { padding: .5rem 1rem; margin-bottom: .5rem; border-radius: 4px; }
+    .success { background: #e6f4ea; }
+    .error { background: #fce8e6; }
+    .meta { color: #666; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  {% if user.is_authenticated %}
+    <nav>
+      <span>Hi, {{ user.username }}</span>
+      {% block nav %}{% endblock %}
+    </nav>
+  {% endif %}
+
+  {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}
+        <li class="{{ message.tags }}">{{ message }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+
+  {% if user.is_authenticated %}
+    <p style="margin-top: 2rem;">
+      <form method="post" action="{% url 'logout' %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit">Log out</button>
+      </form>
+    </p>
+  {% endif %}
+</body>
+</html>

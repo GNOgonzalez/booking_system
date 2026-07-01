@@ -1,0 +1,32 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}Availability{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'teacher_dashboard' %}">Dashboard</a>
+{% endblock %}
+
+{% block content %}
+  <h1>Availability blocks</h1>
+  <p class="meta">Sessions must fall inside a block when you have blocks defined.</p>
+
+  <h2>Add block</h2>
+  <form method="post" action="{% url 'teacher_availability_create' %}">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Add block</button>
+  </form>
+
+  <h2>Your blocks</h2>
+  {% for block in blocks %}
+    <p>
+      {{ block.get_weekday_display }} — {{ block.start_time }} to {{ block.end_time }}
+      <form method="post" action="{% url 'teacher_availability_delete' block.id %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit">Delete</button>
+      </form>
+    </p>
+  {% empty %}
+    <p>No blocks yet — any session time is allowed.</p>
+  {% endfor %}
+{% endblock %}

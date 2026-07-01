@@ -1,0 +1,37 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}Membership{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'student_dashboard' %}">Dashboard</a>
+{% endblock %}
+
+{% block content %}
+  <h1>Membership</h1>
+
+  {% if membership %}
+    <p class="success">
+      Active: {{ membership.plan_type|title }}
+      {% if membership.valid_until %} — valid until {{ membership.valid_until }}{% endif %}
+    </p>
+  {% else %}
+    <p>You have no active membership. Booking requires one.</p>
+  {% endif %}
+
+  <h2>Choose a plan</h2>
+  <form method="post" action="{% url 'membership_purchase' %}">
+    {% csrf_token %}
+    <p>
+      <label>
+        Plan:
+        <select name="plan_type">
+          {% for plan, cents in prices.items %}
+            <option value="{{ plan }}">{{ plan|title }} — ${{ cents|floatformat:0 }}¢/mo</option>
+          {% endfor %}
+        </select>
+      </label>
+    </p>
+    <button type="submit">Purchase (mock)</button>
+  </form>
+  <p class="meta">Payments are mocked in the sandbox. Set STRIPE_SECRET_KEY to enable real checkout.</p>
+{% endblock %}

@@ -1,17 +1,19 @@
-<!DOCTYPE html>
-<html>
-<head><title>Create session</title></head>
-<body>
+{% extends "scheduling/base.html" %}
+
+{% block title %}Create Session{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'teacher_dashboard' %}">Dashboard</a>
+{% endblock %}
+
+{% block content %}
   <h1>Create Session</h1>
   {% if form.errors %}
-    <p>Cannot create session.</p>
+    <p class="error">Please fix the errors below.</p>
   {% endif %}
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
     <button type="submit">Create session</button>
   </form>
-
-  <p><a href="{% url 'teacher_dashboard' %}">Back to dashboard</a></p>
-</body>
-</html>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "scheduling/base.html" %}
+
+{% block title %}Curriculum{% endblock %}
+
+{% block nav %}
+  | <a href="{% url 'home' %}">Home</a>
+{% endblock %}
+
+{% block content %}
+  <h1>Curriculum</h1>
+  {% for item in items %}
+    <article style="margin-bottom: 1.5rem;">
+      <h2>{{ item.title }}</h2>
+      {% if item.teacher %}
+        <p class="meta">Teacher: {{ item.teacher.username }}</p>
+      {% else %}
+        <p class="meta">Global</p>
+      {% endif %}
+      <div>{{ item.content|linebreaks }}</div>
+    </article>
+  {% empty %}
+    <p>No curriculum items published yet.</p>
+  {% endfor %}
+{% endblock %}

@@ -1,37 +1,45 @@
 from django.utils import timezone
+
 from scheduling.models import Booking
+from scheduling.services.membership import has_active_membership
+from scheduling.services.notifications import (
+    send_booking_cancellation,
+    send_booking_confirmation,
+)
 
 
 def can_book(user, session):
-    if user.groups.filter(name='student').exists():
-        if (session.status == 'open'
-        and session.start_time > timezone.now()
-        and session.bookings.filter(status='confirmed').count() < session.capacity
-        and not Booking.objects.filter(
-            student=user,
-            session=session,
-            status='confirmed'
-             #and has_active_membership(user) # TODO: add membership check
-        ).exists()
-        ):
-            return True
-        else:
-            return False
-    else:
+    if not user.groups.filter(name='student').exists():
         return False
+    if not has_active_membership(user):
+        return False
+    if session.status != 'open':
+        return False
+    if session.start_time <= timezone.now():
+        return False
+    if session.bookings.filter(status='confirmed').count() >= session.capacity:
+        return False
+    if Booking.objects.filter(
+        student=user,
+        session=session,
+        status='confirmed',
+    ).exists():
+        return False
+    return True
+
 
 def create_booking(user, session):
     if can_book(user, session):
-        Booking.objects.create(
+        booking = Booking.objects.create(
             student=user,
             session=session,
-            status='confirmed'
+            status='confirmed',
         )
+        send_booking_confirmation(booking)
         return True
-    else:
-        return False
-    
-    
+    return False
+
+
 def can_cancel(user, booking):
     if booking.status != 'confirmed':
         return False
@@ -43,10 +51,18 @@ def can_cancel(user, booking):
         return True
     return False
 
+
 def cancel_booking(user, booking):
-    if can_cancel(user, booking):
-        booking.status = 'cancelled'
-        booking.save()
-        return True
-    else:
+    if not can_cancel(user, booking):
         return False
+
+    booking.status = 'cancelled'
+    booking.save()
+    send_booking_cancellation(booking)
+
+    session = booking.session
+    if not session.bookings.filter(status='confirmed').exists():
+        session.status = 'cancelled'
+        session.save()
+
+    return True
