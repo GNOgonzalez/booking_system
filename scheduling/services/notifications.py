@@ -44,9 +44,9 @@ def send_booking_cancellation(booking):
 def send_membership_receipt(membership):
     body = (
         f"Hi {membership.user.username},\n\n"
-        f"Your {membership.plan_type} membership is active"
+        f"Your {membership.plan.name} membership is active"
     )
     if membership.valid_until:
         body += f" until {membership.valid_until}"
-    body += ".\n\nThank you!"
+    body += f".\nYou have {membership.tickets_remaining} booking tickets.\n\nThank you!"
     return _safe_send('Membership receipt', body, membership.user.email)

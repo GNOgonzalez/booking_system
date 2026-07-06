@@ -2,22 +2,44 @@ from django.contrib import admin
 
 from .models import (
     AvailabilityBlock,
+    BlogPost,
     Booking,
+    ClassOffering,
+    ClassRequest,
+    ClassTopic,
     ClassType,
     CurriculumItem,
     DemoItem,
     Membership,
+    MembershipPlan,
     Message,
+    Payment,
     Profile,
     Session,
+    SpecialAvailability,
+    StudioBranding,
+    StudioGlossary,
+    StudioLLMConfig,
+    TeacherPermission,
 )
 
 admin.site.register(DemoItem)
 admin.site.register(Profile)
 admin.site.register(ClassType)
+admin.site.register(ClassOffering)
+admin.site.register(ClassTopic)
+admin.site.register(TeacherPermission)
+admin.site.register(StudioGlossary)
+admin.site.register(StudioBranding)
+admin.site.register(StudioLLMConfig)
 admin.site.register(AvailabilityBlock)
+admin.site.register(SpecialAvailability)
 admin.site.register(Session)
 admin.site.register(Booking)
+admin.site.register(MembershipPlan)
 admin.site.register(Membership)
+admin.site.register(Payment)
+admin.site.register(BlogPost)
+admin.site.register(ClassRequest)
 admin.site.register(Message)
 admin.site.register(CurriculumItem)

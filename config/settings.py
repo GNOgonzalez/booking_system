@@ -53,6 +53,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'config.middleware.ContentSecurityPolicyMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -132,6 +133,31 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# User-uploaded files (homework purged after 7 days; blog images kept)
+#
+# MEDIA PRIVACY (audit Phase 4):
+# - Django serves /media/ ONLY when DEBUG=True (config/urls.py). WhiteNoise is static-only.
+# - Homework files (media/homework/) are PRIVATE — served exclusively via the authenticated
+#   HomeworkAttachmentDownloadView. They must NEVER be exposed by a public /media/ mapping.
+# - Blog images (media/blog/) and branding logos (media/branding/) are public-facing.
+# - Production: if you map /media/ in nginx/CDN, map ONLY /media/blog/ and /media/branding/.
+#   See README "Deploy" section. Longer term: object storage (S3) with private homework bucket.
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+HOMEWORK_FILE_TTL_DAYS = 7
+MAX_HOMEWORK_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_BLOG_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_LOGO_BYTES = 2 * 1024 * 1024
+ALLOWED_HOMEWORK_EXTENSIONS = {
+    '.pdf', '.doc', '.docx', '.txt', '.rtf',
+    '.png', '.jpg', '.jpeg', '.gif', '.webp',
+    '.zip', '.mp3', '.mp4', '.wav', '.m4a',
+}
+ALLOWED_BLOG_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+ALLOWED_LOGO_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+DATA_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
+
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
 
@@ -157,12 +183,32 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
+        'scheduling.api.permissions.IsActiveUser',
     ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'login': '10/minute',
+        'token_refresh': '30/minute',
+    },
 }
 
+if RUNNING_TESTS:
+    # Full suite issues many token requests from one client IP — keep tests unblocked.
+    # AuthRateLimitTests overrides login rate to verify throttling explicitly.
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['login'] = '10000/minute'
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['token_refresh'] = '10000/minute'
+
+# Tokens live in browser localStorage (see docs/security.md) — keep lifetimes short.
+# Refresh defaults to 7 days in dev, 1 day in production; override via env.
+JWT_ACCESS_MINUTES = int(os.environ.get('JWT_ACCESS_MINUTES', '60'))
+JWT_REFRESH_DAYS = int(os.environ.get('JWT_REFRESH_DAYS', '7' if DEBUG else '1'))
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=JWT_ACCESS_MINUTES),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=JWT_REFRESH_DAYS),
+    # Reject valid JWTs from deactivated users at the authentication layer
+    # (explicit — this is the library default, but the audit requires it pinned).
+    'CHECK_USER_IS_ACTIVE': True,
 }
 
 
@@ -184,23 +230,53 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
 
+# Content-Security-Policy for Django-served pages (applied when DEBUG=False via
+# config.middleware.ContentSecurityPolicyMiddleware). 'unsafe-inline' styles are
+# needed by Django admin and the DRF browsable API; scripts stay 'self'-only.
+CONTENT_SECURITY_POLICY = os.environ.get(
+    'CSP_POLICY',
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'",
+)
+
 
 # Integrations (optional; stubs stay inert until configured)
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+
 STRIPE = {
     'SECRET_KEY': os.environ.get('STRIPE_SECRET_KEY', ''),
     'PUBLISHABLE_KEY': os.environ.get('STRIPE_PUBLISHABLE_KEY', ''),
+    'WEBHOOK_SECRET': STRIPE_WEBHOOK_SECRET,
     'ENABLED': bool(os.environ.get('STRIPE_SECRET_KEY', '')),
-    'PRICES': {'basic': 2000, 'premium': 5000},  # cents / month
 }
+
+# Mock membership purchases (POST /api/membership/) are allowed in DEBUG by default.
+# In production (DEBUG=False), require Stripe or explicit ALLOW_MOCK_PAYMENTS=true.
+ALLOW_MOCK_PAYMENTS = env_bool('ALLOW_MOCK_PAYMENTS', default=False)
+if RUNNING_TESTS:
+    # Tests may run with DEBUG=False from .env; override_settings can still disable mock.
+    ALLOW_MOCK_PAYMENTS = True
 
 GOOGLE = {
     'CLIENT_ID': os.environ.get('GOOGLE_CLIENT_ID', ''),
     'CLIENT_SECRET': os.environ.get('GOOGLE_CLIENT_SECRET', ''),
     'ENABLED': bool(os.environ.get('GOOGLE_CLIENT_ID', '')),
+    'REDIRECT_URI': os.environ.get(
+        'GOOGLE_REDIRECT_URI',
+        'http://127.0.0.1:8000/integrations/google/callback/',
+    ),
 }
 
-SIMPLYBOOK = {
-    'API_KEY': os.environ.get('SIMPLYBOOK_API_KEY', ''),
-    'COMPANY': os.environ.get('SIMPLYBOOK_COMPANY', ''),
-    'ENABLED': bool(os.environ.get('SIMPLYBOOK_API_KEY', '')),
+ZOOM = {
+    'ACCOUNT_ID': os.environ.get('ZOOM_ACCOUNT_ID', ''),
+    'CLIENT_ID': os.environ.get('ZOOM_CLIENT_ID', ''),
+    'CLIENT_SECRET': os.environ.get('ZOOM_CLIENT_SECRET', ''),
+    'ENABLED': bool(os.environ.get('ZOOM_CLIENT_ID', '')),
 }

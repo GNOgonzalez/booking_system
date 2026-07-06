@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { useBranding } from '../hooks/useBranding.jsx'
 
 export default function LoginPage({ onLogin }) {
+  const { branding } = useBranding()
   const [username, setUsername] = useState('demo_student')
   const [password, setPassword] = useState('demo1234')
   const [error, setError] = useState('')
@@ -22,7 +24,12 @@ export default function LoginPage({ onLogin }) {
   return (
     <div className="auth-wrap">
       <div className="auth-card">
-        <h1>Booking Studio</h1>
+        <div className="auth-brand">
+          {branding.logo_url && (
+            <img src={branding.logo_url} alt="" className="branding-logo branding-logo--auth" />
+          )}
+          <h1>{branding.display_name}</h1>
+        </div>
         <form onSubmit={handleSubmit}>
           <div className="field">
             <label>Username</label>

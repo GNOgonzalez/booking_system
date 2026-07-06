@@ -19,10 +19,10 @@ from scheduling.views.teacher import (
     teacher_availability_create,
     teacher_availability_delete,
     teacher_availability_list,
-    teacher_class_type_create,
-    teacher_class_type_list,
     teacher_create_session,
     teacher_session_list,
+    teacher_special_availability_create,
+    teacher_special_availability_delete,
 )
 
 __all__ = [
@@ -35,8 +35,8 @@ __all__ = [
     'teacher_availability_list',
     'teacher_availability_create',
     'teacher_availability_delete',
-    'teacher_class_type_list',
-    'teacher_class_type_create',
+    'teacher_special_availability_create',
+    'teacher_special_availability_delete',
     'student_book_session',
     'student_session_list',
     'student_booking_list',

@@ -47,9 +47,10 @@ python manage.py test          # runs on a SQLite test DB (no Postgres perms nee
 config/            settings (env-driven), urls, wsgi
 scheduling/        core app: models, services, HTML views, DRF api, templates
 progress/          student progress reports app
-integrations/      google/ (Meet) + simplybook/ (adapter) scaffolds
+integrations/      google/ (Meet), zoom/, stripe/ (payment scaffolds)
 frontend/          React SPA (Vite)
-docs/              architecture & roadmap, learning notes
+docs/              architecture, roadmap, audit plan
+docs/learn/        CS50P / Django self-study (optional)
 TICKETS.md         bug tracker
 ```
 
@@ -61,9 +62,9 @@ provide credentials:
 | Feature | Enable with | Without it |
 |---------|-------------|------------|
 | Email (SMTP) | `EMAIL_HOST=...` | emails print to console |
-| Stripe payments | `STRIPE_SECRET_KEY=...` | membership purchase is mocked |
+| Stripe payments | `STRIPE_SECRET_KEY` + `STRIPE_PUBLISHABLE_KEY` | mock purchases in **DEBUG only**; blocked in production unless `ALLOW_MOCK_PAYMENTS=true` |
+| Stripe webhooks | `STRIPE_WEBHOOK_SECRET` + forward to `/api/payments/stripe/webhook/` | membership activates after `checkout.session.completed` |
 | Google Meet | `GOOGLE_CLIENT_ID=...` | placeholder Meet links |
-| SimplyBook sync | `SIMPLYBOOK_API_KEY=...` | `sync_simplybook` is a no-op |
 
 ## Deploy
 
@@ -72,7 +73,49 @@ docker compose up --build      # web + postgres
 ```
 
 Or use the `Procfile` (release runs migrations, web runs gunicorn). Set `DEBUG=False`,
-`SECRET_KEY`, `ALLOWED_HOSTS`, and DB env vars in production.
+`SECRET_KEY`, `ALLOWED_HOSTS`, and DB env vars in production. Configure **Stripe** for
+membership purchases — mock `POST /api/membership/` is disabled when `DEBUG=False` unless
+`ALLOW_MOCK_PAYMENTS=true` (testing only; do not use in real production).
+
+### Media files in production (privacy)
+
+WhiteNoise serves **static files only** — it never serves `MEDIA_ROOT`. Django itself serves
+`/media/` only when `DEBUG=True`. In production:
+
+| Path | Visibility | How to serve |
+|------|------------|--------------|
+| `media/homework/` | **Private** — participants + staff only | Never map publicly. Files are streamed through the authenticated API (`/api/progress/homework/entries/<id>/download/`). |
+| `media/blog/` | Public (home-page images) | Map in nginx/CDN, or serve from object storage |
+| `media/branding/` | Public (sign-in logo) | Same as blog |
+
+If you add an nginx `location /media/` block, restrict it to the public subfolders:
+
+```nginx
+location /media/blog/     { alias /app/media/blog/; }
+location /media/branding/ { alias /app/media/branding/; }
+# NO location for /media/homework/ — must stay API-only
+```
+
+For real hosting, prefer object storage (e.g. S3) with a **private** bucket for homework and
+public bucket/prefix for blog + branding. Also mount `media/` on a persistent volume — the
+Docker image filesystem is ephemeral.
+
+## Stripe (local testing)
+
+1. Add keys to `.env` (from [Stripe Dashboard](https://dashboard.stripe.com/test/apikeys)):
+   ```bash
+   STRIPE_SECRET_KEY=sk_test_...
+   STRIPE_PUBLISHABLE_KEY=pk_test_...
+   ```
+2. Install [Stripe CLI](https://stripe.com/docs/stripe-cli) and forward webhooks:
+   ```bash
+   stripe listen --forward-to http://127.0.0.1:8000/api/payments/stripe/webhook/
+   ```
+   Copy the webhook signing secret into `.env` as `STRIPE_WEBHOOK_SECRET=whsec_...`
+3. Log in as a student → **Membership** → **Pay with Stripe** (test card `4242 4242 4242 4242`).
+
+Unset `STRIPE_SECRET_KEY` to use mock purchases in local dev (`DEBUG=True` only). In production
+(`DEBUG=False`), mock purchases are blocked unless `ALLOW_MOCK_PAYMENTS=true`.
 
 ## Roadmap & design
 

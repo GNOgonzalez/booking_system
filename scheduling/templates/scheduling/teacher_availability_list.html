@@ -7,17 +7,17 @@
 {% endblock %}
 
 {% block content %}
-  <h1>Availability blocks</h1>
-  <p class="meta">Sessions must fall inside a block when you have blocks defined.</p>
+  <h1>Availability</h1>
+  <p class="meta">Sessions must fall inside a weekly or special-day block when you have blocks defined.</p>
 
-  <h2>Add block</h2>
+  <h2>Weekly blocks</h2>
   <form method="post" action="{% url 'teacher_availability_create' %}">
     {% csrf_token %}
     {{ form.as_p }}
-    <button type="submit">Add block</button>
+    <button type="submit">Add weekly block</button>
   </form>
 
-  <h2>Your blocks</h2>
+  <h3>Your weekly blocks</h3>
   {% for block in blocks %}
     <p>
       {{ block.get_weekday_display }} — {{ block.start_time }} to {{ block.end_time }}
@@ -27,6 +27,32 @@
       </form>
     </p>
   {% empty %}
-    <p>No blocks yet — any session time is allowed.</p>
+    <p>No weekly blocks yet.</p>
   {% endfor %}
+
+  <h2>Special days</h2>
+  <p class="meta">One-off availability for a specific date (e.g. holiday makeup).</p>
+  <form method="post" action="{% url 'teacher_special_availability_create' %}">
+    {% csrf_token %}
+    {{ special_form.as_p }}
+    <button type="submit">Add special day</button>
+  </form>
+
+  <h3>Your special days</h3>
+  {% for block in special_blocks %}
+    <p>
+      {{ block.date }} — {{ block.start_time }} to {{ block.end_time }}
+      {% if block.note %} ({{ block.note }}){% endif %}
+      <form method="post" action="{% url 'teacher_special_availability_delete' block.id %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit">Delete</button>
+      </form>
+    </p>
+  {% empty %}
+    <p>No special days yet.</p>
+  {% endfor %}
+
+  {% if not blocks and not special_blocks %}
+    <p>With no blocks at all, any session time is allowed.</p>
+  {% endif %}
 {% endblock %}

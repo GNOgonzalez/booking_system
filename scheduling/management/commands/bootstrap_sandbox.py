@@ -4,8 +4,24 @@ from django.contrib.auth.models import Group, User
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from progress.models import ProgressReport, Skill
-from scheduling.models import ClassType, CurriculumItem, Membership, Message, Session
+from progress.homework_services import add_homework_entry, create_homework_assignment
+from progress.models import HomeworkAssignment, ProgressReport, SessionFeedback, Skill
+from progress.services import ensure_default_score_dimensions
+from scheduling.models import (
+    AvailabilityBlock,
+    Booking,
+    ClassOffering,
+    ClassTopic,
+    CurriculumItem,
+    Membership,
+    MembershipPlan,
+    Message,
+    Session,
+)
+from scheduling.services.glossary import ensure_default_glossary
+from scheduling.services.meetings import create_meeting_link
+from scheduling.services.sessions import session_display_title
+from scheduling.services.teacher_permissions import ensure_default_permissions
 
 
 class Command(BaseCommand):
@@ -18,6 +34,127 @@ class Command(BaseCommand):
             help='Create sample class types, membership, curriculum, and a future session.',
         )
 
+    def _ensure_class_offering(self, teacher, subject, level, focus, topics, *, topics_ordered=False, **extra):
+        if isinstance(topics, str):
+            topics = [topics]
+        offering, created = ClassOffering.objects.update_or_create(
+            teacher=teacher,
+            subject=subject,
+            level=level,
+            focus=focus,
+            defaults={
+                'default_capacity': extra.pop('default_capacity', 4),
+                'ticket_cost': extra.pop('ticket_cost', 1),
+                'is_active': True,
+                'topics_ordered': topics_ordered,
+            },
+        )
+        if not created:
+            offering.topics_ordered = topics_ordered
+            offering.default_capacity = extra.get('default_capacity', offering.default_capacity)
+            offering.ticket_cost = extra.get('ticket_cost', offering.ticket_cost)
+            offering.is_active = True
+            offering.save()
+        for index, title in enumerate(topics):
+            ClassTopic.objects.update_or_create(
+                class_offering=offering,
+                title=title,
+                defaults={'sort_order': index},
+            )
+        return offering
+
+    def _class_topic(self, offering, title):
+        return ClassTopic.objects.get(class_offering=offering, title=title)
+
+    def _ensure_subject_plan(self, name, subject, offerings, **kwargs):
+        plan_type = kwargs.pop('plan_type', MembershipPlan.PLAN_SUBSCRIPTION)
+        plan, _ = MembershipPlan.objects.update_or_create(
+            name=name,
+            defaults={
+                'description': kwargs.get('description', ''),
+                'plan_type': plan_type,
+                'price_cents': kwargs.get('price_cents', 2000),
+                'billing_period_days': kwargs.get('billing_period_days', 30),
+                'ticket_allowance': kwargs.get('ticket_allowance', 10),
+                'is_active': True,
+            },
+        )
+        subject_classes = [o for o in offerings if o.subject == subject]
+        plan.allowed_classes.set(subject_classes)
+        return plan
+
+    def _grant_membership(self, user, plan):
+        membership, created = Membership.objects.get_or_create(
+            user=user,
+            plan=plan,
+            defaults={
+                'is_active': True,
+                'valid_until': timezone.now().date() + timedelta(days=365),
+                'tickets_remaining': plan.ticket_allowance,
+            },
+        )
+        if not created and membership.tickets_remaining < plan.ticket_allowance:
+            membership.tickets_remaining = plan.ticket_allowance
+            membership.is_active = True
+            membership.valid_until = timezone.now().date() + timedelta(days=365)
+            membership.save()
+        return membership
+
+    def _ensure_demo_session(self, teacher, offering, external_id, start, end, *, class_topic=None, **extra):
+        title = session_display_title(offering, class_topic)
+        session, _ = Session.objects.update_or_create(
+            teacher=teacher,
+            external_id=external_id,
+            defaults={
+                'title': title,
+                'class_offering': offering,
+                'class_topic': class_topic,
+                'start_time': start,
+                'end_time': end,
+                'capacity': extra.pop('capacity', offering.default_capacity),
+                'status': extra.pop('status', 'open'),
+                **extra,
+            },
+        )
+        sync_fields = []
+        if session.class_offering_id != offering.id:
+            session.class_offering = offering
+            sync_fields.append('class_offering')
+        if session.class_topic_id != (class_topic.id if class_topic else None):
+            session.class_topic = class_topic
+            sync_fields.append('class_topic')
+        if session.title != title:
+            session.title = title
+            sync_fields.append('title')
+        if sync_fields:
+            session.save(update_fields=sync_fields)
+        if not session.meeting_url:
+            session.meeting_url = create_meeting_link(session)
+            session.save(update_fields=['meeting_url'])
+        return session
+
+    def _ensure_booking(self, student, session):
+        booking, created = Booking.objects.get_or_create(
+            student=student,
+            session=session,
+            defaults={'status': 'confirmed'},
+        )
+        if not created and booking.status != 'confirmed':
+            booking.status = 'confirmed'
+            booking.save(update_fields=['status'])
+        return booking
+
+    def _ensure_demo_student(self, username, email):
+        user, _ = User.objects.get_or_create(username=username, defaults={'email': email})
+        user.set_password('demo1234')
+        user.save()
+        user.groups.add(Group.objects.get(name='student'))
+        return user
+
+    def _book_students(self, session, students):
+        for student in students:
+            self._ensure_booking(student, session)
+
     def handle(self, *args, **options):
         for name in ('student', 'teacher', 'staff'):
             Group.objects.get_or_create(name=name)
@@ -26,6 +163,19 @@ class Command(BaseCommand):
         if not options['demo']:
             self.stdout.write(self.style.SUCCESS('Groups ready. Pass --demo to seed sample data.'))
             return
+
+        ensure_default_score_dimensions()
+        ensure_default_glossary()
+
+        staff_user, _ = User.objects.get_or_create(
+            username='demo_staff',
+            defaults={'email': 'staff@example.com'},
+        )
+        staff_user.set_password('demo1234')
+        staff_user.is_staff = True
+        staff_user.is_superuser = True
+        staff_user.save()
+        staff_user.groups.add(Group.objects.get(name='staff'))
 
         teacher, _ = User.objects.get_or_create(username='demo_teacher', defaults={'email': 'teacher@example.com'})
         teacher.set_password('demo1234')
@@ -37,30 +187,185 @@ class Command(BaseCommand):
 
         teacher.groups.add(Group.objects.get(name='teacher'))
         student.groups.add(Group.objects.get(name='student'))
+        ensure_default_permissions(teacher)
 
-        Membership.objects.get_or_create(
-            user=student,
-            defaults={'plan_type': 'basic', 'is_active': True, 'valid_until': timezone.now().date() + timedelta(days=365)},
+        student_2 = self._ensure_demo_student('demo_student_2', 'alex@example.com')
+        student_3 = self._ensure_demo_student('demo_student_3', 'sam@example.com')
+        student_4 = self._ensure_demo_student('demo_student_4', 'jordan@example.com')
+
+        if not Membership.objects.filter(user=student).exists():
+            pass  # granted after catalog + plans below
+
+        # Teacher class catalog — session titles come from this list.
+        catalog = {
+            'grammar_vocab': self._ensure_class_offering(
+                teacher,
+                'Japanese',
+                'Beginner',
+                'Grammar and Vocabulary',
+                ['Present Tense Verbs', 'Hiragana Review'],
+                topics_ordered=True,
+            ),
+            'dialogues': self._ensure_class_offering(
+                teacher, 'Japanese', 'Beginner', 'Reading', 'Short Dialogues',
+            ),
+            'pronunciation': self._ensure_class_offering(
+                teacher, 'Japanese', 'Beginner', 'Speaking', 'Pronunciation Drills',
+            ),
+            'daily_routines': self._ensure_class_offering(
+                teacher, 'Japanese', 'Intermediate', 'Conversation', 'Daily Routines',
+                default_capacity=6,
+            ),
+            'formal_email': self._ensure_class_offering(
+                teacher, 'Japanese', 'Advanced', 'Writing', 'Formal Email',
+            ),
+            'greetings': self._ensure_class_offering(
+                teacher, 'Japanese', 'Beginner', 'Listening', 'Greetings and Introductions',
+            ),
+            'english_grammar': self._ensure_class_offering(
+                teacher,
+                'English',
+                'Beginner',
+                'Grammar',
+                ['Present Simple', 'Articles', 'Questions'],
+                topics_ordered=True,
+            ),
+            'english_speaking': self._ensure_class_offering(
+                teacher, 'English', 'Beginner', 'Speaking', 'Conversation Practice',
+            ),
+            'english_writing': self._ensure_class_offering(
+                teacher, 'English', 'Intermediate', 'Writing', 'Essay Structure',
+            ),
+            'english_workshop': self._ensure_class_offering(
+                teacher, 'English', 'Advanced', 'Events', 'Workshop: Public Speaking',
+                ticket_cost=2,
+                default_capacity=8,
+            ),
+        }
+
+        all_offerings = list(catalog.values())
+        japanese_plan = self._ensure_subject_plan(
+            'Japanese',
+            'Japanese',
+            all_offerings,
+            description='Book Japanese classes. Includes 10 tickets per billing period.',
+            price_cents=2000,
+            ticket_allowance=10,
         )
-
-        piano, _ = ClassType.objects.get_or_create(
-            teacher=teacher,
-            name='Piano',
-            defaults={'description': 'Beginner piano', 'default_capacity': 4},
+        self._ensure_subject_plan(
+            'English',
+            'English',
+            all_offerings,
+            description='Book English classes. Includes 10 tickets per billing period.',
+            price_cents=2200,
+            ticket_allowance=10,
         )
-
-        session, _ = Session.objects.get_or_create(
-            teacher=teacher,
-            title='Piano — intro group',
-            start_time=timezone.now() + timedelta(days=2),
-            end_time=timezone.now() + timedelta(days=2, hours=1),
-            defaults={'class_type': piano, 'capacity': 4, 'status': 'open'},
+        self._ensure_subject_plan(
+            'Japanese — 1 ticket',
+            'Japanese',
+            all_offerings,
+            plan_type=MembershipPlan.PLAN_TICKET_PACK,
+            description='Add one booking ticket to your Japanese membership.',
+            price_cents=500,
+            ticket_allowance=1,
+            billing_period_days=0,
         )
-        if not session.meeting_url:
-            from integrations.google.meet import create_meet_link
+        self._ensure_subject_plan(
+            'English — 1 ticket',
+            'English',
+            all_offerings,
+            plan_type=MembershipPlan.PLAN_TICKET_PACK,
+            description='Add one booking ticket to your English membership.',
+            price_cents=500,
+            ticket_allowance=1,
+            billing_period_days=0,
+        )
+        MembershipPlan.objects.filter(name__in=('Basic', 'Premium')).update(is_active=False)
 
-            session.meeting_url = create_meet_link(session)
-            session.save(update_fields=['meeting_url'])
+        self._grant_membership(student, japanese_plan)
+        for extra_student in (student_2, student_3, student_4):
+            self._grant_membership(extra_student, japanese_plan)
+
+        for weekday, start, end in ((0, '09:00', '12:00'), (2, '14:00', '17:00'), (4, '10:00', '13:00')):
+            AvailabilityBlock.objects.get_or_create(
+                teacher=teacher,
+                weekday=weekday,
+                start_time=start,
+                end_time=end,
+            )
+
+        now = timezone.now()
+
+        report_sessions = [
+            (
+                'demo_report_scales',
+                catalog['grammar_vocab'],
+                now - timedelta(days=1, hours=2),
+                [student],
+                self._class_topic(catalog['grammar_vocab'], 'Present Tense Verbs'),
+            ),
+            ('demo_report_repertoire', catalog['dialogues'], now - timedelta(days=3, hours=1), [student, student_2], None),
+            (
+                'demo_report_theory',
+                catalog['grammar_vocab'],
+                now - timedelta(days=6),
+                [student, student_2, student_3],
+                self._class_topic(catalog['grammar_vocab'], 'Hiragana Review'),
+            ),
+            (
+                'demo_report_upcoming',
+                catalog['pronunciation'],
+                now + timedelta(days=2, hours=3),
+                [student, student_2, student_4],
+                None,
+            ),
+            (
+                'demo_report_group',
+                catalog['daily_routines'],
+                now + timedelta(days=5),
+                [student, student_2, student_3, student_4],
+                None,
+            ),
+            (
+                'demo_multi_ensemble',
+                catalog['formal_email'],
+                now + timedelta(days=9, hours=1),
+                [student, student_2, student_3, student_4],
+                None,
+            ),
+        ]
+        for external_id, offering, start, students, class_topic in report_sessions:
+            end = start + timedelta(hours=1)
+            capacity = max(len(students) + 2, offering.default_capacity)
+            session = self._ensure_demo_session(
+                teacher, offering, external_id, start, end, capacity=capacity, class_topic=class_topic,
+            )
+            self._book_students(session, students)
+
+        intro = self._ensure_demo_session(
+            teacher,
+            catalog['greetings'],
+            'demo_intro_group',
+            now + timedelta(days=7, hours=2),
+            now + timedelta(days=7, hours=3),
+            capacity=6,
+        )
+        self._book_students(intro, [student, student_2, student_3])
+
+        self._ensure_demo_session(
+            teacher,
+            catalog['english_speaking'],
+            'demo_english_open',
+            now + timedelta(days=4, hours=2),
+            now + timedelta(days=4, hours=3),
+        )
+        self._ensure_demo_session(
+            teacher,
+            catalog['english_workshop'],
+            'demo_english_workshop',
+            now + timedelta(days=10, hours=5),
+            now + timedelta(days=10, hours=7),
+        )
 
         rhythm, _ = Skill.objects.get_or_create(name='Rhythm')
         Skill.objects.get_or_create(name='Sight-reading')
@@ -72,6 +377,91 @@ class Command(BaseCommand):
                 rating=4,
                 note='Great progress on timing.',
             )
+
+        trend = [
+            (2, 1, 1, 2),
+            (3, 2, 2, 3),
+            (3, 3, 3, 3),
+            (4, 4, 3, 4),
+            (5, 4, 4, 5),
+        ]
+        chart_offerings = [
+            (catalog['grammar_vocab'], self._class_topic(catalog['grammar_vocab'], 'Present Tense Verbs')),
+            (catalog['grammar_vocab'], self._class_topic(catalog['grammar_vocab'], 'Hiragana Review')),
+            (catalog['dialogues'], None),
+            (catalog['pronunciation'], None),
+            (catalog['greetings'], None),
+        ]
+        for i, scores in enumerate(trend):
+            weeks_ago = len(trend) - i
+            past = now - timedelta(weeks=weeks_ago)
+            offering, class_topic = chart_offerings[i]
+            past_session = self._ensure_demo_session(
+                teacher,
+                offering,
+                f'demo_chart_{i + 1}',
+                past,
+                past + timedelta(hours=1),
+                class_topic=class_topic,
+            )
+            self._ensure_booking(student, past_session)
+            g, r, w, s = scores
+            topic_note = class_topic.title if class_topic else offering.display_name
+            SessionFeedback.objects.get_or_create(
+                student=student,
+                session=past_session,
+                defaults={
+                    'teacher': teacher,
+                    'grammar_stars': g,
+                    'reading_stars': r,
+                    'writing_stars': w,
+                    'speaking_stars': s,
+                    'scores': {
+                        'grammar': g,
+                        'reading': r,
+                        'writing': w,
+                        'speaking': s,
+                    },
+                    'class_notes': f'{topic_note}: steady improvement.',
+                },
+            )
+
+        chart_session_1 = Session.objects.filter(teacher=teacher, external_id='demo_chart_1').first()
+        chart_session_3 = Session.objects.filter(teacher=teacher, external_id='demo_chart_3').first()
+        if chart_session_1 and not HomeworkAssignment.objects.filter(
+            session=chart_session_1, student=student,
+        ).exists():
+            assignment, err = create_homework_assignment(
+                teacher=teacher,
+                student=student,
+                session=chart_session_1,
+                kind=HomeworkAssignment.KIND_FILE,
+                title='Hiragana practice sheet',
+                prompt='Review these characters before our next session. Reply with your completed worksheet photo or notes.',
+            )
+            if assignment and not err:
+                add_homework_entry(
+                    assignment,
+                    author=student,
+                    body='I practiced rows あ–そ. Still working on た row.',
+                )
+        if chart_session_3 and not HomeworkAssignment.objects.filter(
+            session=chart_session_3, student=student,
+        ).exists():
+            assignment, err = create_homework_assignment(
+                teacher=teacher,
+                student=student,
+                session=chart_session_3,
+                kind=HomeworkAssignment.KIND_JOURNAL,
+                title='Dialogue reflection',
+                prompt='After each short dialogue we covered, write 2–3 sentences: what new phrase did you learn, and where could you use it this week?',
+            )
+            if assignment and not err:
+                add_homework_entry(
+                    assignment,
+                    author=student,
+                    body='Learned 「〜てください」 for polite requests. I used it ordering at a café.',
+                )
 
         CurriculumItem.objects.get_or_create(
             title='Welcome to the studio',
@@ -93,3 +483,6 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('Demo data ready.'))
         self.stdout.write('  demo_teacher / demo1234')
         self.stdout.write('  demo_student / demo1234')
+        self.stdout.write('  demo_student_2, demo_student_3, demo_student_4 / demo1234')
+        self.stdout.write('  demo_staff / demo1234  (Django admin at /admin/)')
+        self.stdout.write('  7 Japanese + 4 English classes; subject-specific membership plans.')

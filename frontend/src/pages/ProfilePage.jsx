@@ -1,5 +1,97 @@
 import { useEffect, useState } from 'react'
-import { changePassword, getMe, updateMe } from '../api.js'
+import { useSearchParams } from 'react-router-dom'
+import { apiFetch, changePassword, getMe, updateMe } from '../api.js'
+import { applyTheme } from '../hooks/useTheme.js'
+
+function GoogleCalendarCard() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [gStatus, setGStatus] = useState(null)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = () => {
+    apiFetch('/api/integrations/google/status/')
+      .then(setGStatus)
+      .catch(() => setGStatus(null))
+  }
+
+  useEffect(load, [])
+
+  useEffect(() => {
+    const result = searchParams.get('google')
+    if (!result) return
+    if (result === 'connected') setMessage('Google Calendar connected. New sessions will get real Meet links.')
+    else if (result === 'denied') setError('Google connection was cancelled.')
+    else setError('Google connection failed. Try again.')
+    searchParams.delete('google')
+    setSearchParams(searchParams, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const connect = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const data = await apiFetch('/api/integrations/google/connect/')
+      window.location.assign(data.authorization_url)
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  const disconnectGoogle = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const next = await apiFetch('/api/integrations/google/disconnect/', { method: 'POST' })
+      setGStatus(next)
+      setMessage('Google Calendar disconnected.')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (gStatus === null) return null
+
+  return (
+    <div className="card">
+      <h2>Google Calendar</h2>
+      {message && <div className="success">{message}</div>}
+      {error && <div className="error">{error}</div>}
+      {!gStatus.configured ? (
+        <p className="card-meta">
+          Google OAuth is not configured on this server. Sessions use placeholder Meet links.
+        </p>
+      ) : gStatus.connected ? (
+        <>
+          <p className="card-meta">
+            Connected — sessions you create with Google Meet get real meeting links.
+          </p>
+          <div className="form-actions">
+            <button type="button" className="secondary" onClick={disconnectGoogle} disabled={busy}>
+              Disconnect
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="card-meta">
+            Connect your Google account so new sessions get real Meet links on your calendar.
+          </p>
+          <div className="form-actions">
+            <button type="button" onClick={connect} disabled={busy}>
+              {busy ? 'Redirecting…' : 'Connect Google Calendar'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 export default function ProfilePage({ onSaved }) {
   const [form, setForm] = useState({
@@ -8,6 +100,7 @@ export default function ProfilePage({ onSaved }) {
     last_name: '',
     email: '',
     timezone: 'UTC',
+    theme: 'system',
   })
   const [username, setUsername] = useState('')
   const [roles, setRoles] = useState([])
@@ -29,6 +122,7 @@ export default function ProfilePage({ onSaved }) {
           last_name: me.last_name || '',
           email: me.email || '',
           timezone: me.timezone || 'UTC',
+          theme: me.theme || 'system',
         })
       })
       .catch((err) => setProfileErr(err.message))
@@ -43,6 +137,7 @@ export default function ProfilePage({ onSaved }) {
     setProfileErr('')
     try {
       await updateMe(form)
+      applyTheme(form.theme)
       setProfileMsg('Profile saved.')
       if (onSaved) onSaved()
     } catch (err) {
@@ -102,11 +197,21 @@ export default function ProfilePage({ onSaved }) {
             <label>Timezone</label>
             <input value={form.timezone} onChange={onField('timezone')} placeholder="e.g. UTC, America/New_York" />
           </div>
+          <div className="field">
+            <label>Theme</label>
+            <select value={form.theme} onChange={onField('theme')}>
+              <option value="system">System default</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
           <div className="form-actions">
             <button type="submit">Save changes</button>
           </div>
         </form>
       </div>
+
+      {(roles.includes('teacher') || roles.includes('staff')) && <GoogleCalendarCard />}
 
       <div className="card">
         <h2>Change password</h2>

@@ -1,5 +1,5 @@
-from django.db import models
 from django.conf import settings
+from django.db import models
 
 
 class DemoItem(models.Model):
@@ -11,9 +11,20 @@ class DemoItem(models.Model):
 
 
 class Profile(models.Model):
+    THEME_LIGHT = 'light'
+    THEME_DARK = 'dark'
+    THEME_SYSTEM = 'system'
+    THEME_CHOICES = [
+        (THEME_LIGHT, 'Light'),
+        (THEME_DARK, 'Dark'),
+        (THEME_SYSTEM, 'System'),
+    ]
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     display_name = models.CharField(max_length=50, blank=True)
     timezone = models.TextField(default='UTC')
+    theme = models.CharField(max_length=10, choices=THEME_CHOICES, default=THEME_SYSTEM)
+    onboarding_dismissed_at = models.DateTimeField(null=True, blank=True)
     stripe_customer_id = models.CharField(max_length=100, blank=True)
     external_id = models.CharField(max_length=100, blank=True)
 
@@ -37,6 +48,76 @@ class ClassType(models.Model):
 
     def __str__(self):
         return f"{self.teacher.username} — {self.name}"
+
+
+class ClassOffering(models.Model):
+    """Teachable unit in a teacher's catalog (subject → level → focus + topics).
+
+    Session titles are chosen from this list. Per-teacher rows support multi-tenant SaaS.
+    """
+
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='class_offerings',
+    )
+    subject = models.CharField(max_length=100)
+    level = models.CharField(max_length=100)
+    focus = models.CharField(max_length=150)
+    topics_ordered = models.BooleanField(
+        default=False,
+        help_text='When enabled, topics are meant to be taught in sort order.',
+    )
+    default_capacity = models.PositiveIntegerField(default=4)
+    ticket_cost = models.PositiveIntegerField(
+        default=1,
+        help_text='Booking tickets required to reserve a session for this class.',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'scheduling_classes'
+        ordering = ['subject', 'level', 'focus']
+        verbose_name = 'class'
+        verbose_name_plural = 'classes'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['teacher', 'subject', 'level', 'focus'],
+                name='unique_class_offering_per_teacher',
+            ),
+        ]
+
+    @property
+    def display_name(self):
+        return f"{self.subject} · {self.level} · {self.focus}"
+
+    def __str__(self):
+        return self.display_name
+
+
+class ClassTopic(models.Model):
+    """Optional curriculum topic within a class offering."""
+
+    class_offering = models.ForeignKey(
+        ClassOffering,
+        on_delete=models.CASCADE,
+        related_name='topics',
+    )
+    title = models.CharField(max_length=150)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'title']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['class_offering', 'title'],
+                name='unique_topic_per_class',
+            ),
+        ]
+
+    def __str__(self):
+        return self.title
 
 
 class AvailabilityBlock(models.Model):
@@ -66,7 +147,154 @@ class AvailabilityBlock(models.Model):
         return f"{self.teacher.username} — {self.get_weekday_display()} {self.start_time}-{self.end_time}"
 
 
+class SpecialAvailability(models.Model):
+    """One-off availability on a specific calendar date (e.g. holiday makeup day)."""
+
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='special_availabilities',
+    )
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    note = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ['date', 'start_time']
+        verbose_name_plural = 'special availabilities'
+
+    def __str__(self):
+        label = f"{self.date} {self.start_time}-{self.end_time}"
+        if self.note:
+            return f"{self.teacher.username} — {label} ({self.note})"
+        return f"{self.teacher.username} — {label}"
+
+
+class TeacherPermission(models.Model):
+    """Per-teacher capability flags — staff enables or disables studio features."""
+
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='teacher_permissions',
+    )
+    key = models.CharField(max_length=50)
+    is_enabled = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['key']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['teacher', 'key'],
+                name='unique_permission_per_teacher',
+            ),
+        ]
+
+    def __str__(self):
+        state = 'on' if self.is_enabled else 'off'
+        return f"{self.teacher.username} — {self.key} ({state})"
+
+
+class StudioGlossary(models.Model):
+    """Customizable UI labels — staff renames students→clients, classes→sessions, etc."""
+
+    key = models.SlugField(max_length=50, unique=True)
+    singular = models.CharField(max_length=80)
+    plural = models.CharField(max_length=80)
+
+    class Meta:
+        ordering = ['key']
+        verbose_name_plural = 'studio glossary'
+
+    def __str__(self):
+        return f"{self.key}: {self.singular} / {self.plural}"
+
+
+def studio_logo_upload_path(instance, filename):
+    return f'branding/{filename}'
+
+
+class StudioBranding(models.Model):
+    """Sign-in screen and app header — display name and optional logo."""
+
+    display_name = models.CharField(max_length=120, default='Booking Studio')
+    logo = models.FileField(upload_to=studio_logo_upload_path, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'studio branding'
+        verbose_name_plural = 'studio branding'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={'display_name': 'Booking Studio'})
+        return obj
+
+    def __str__(self):
+        return self.display_name
+
+
+class StudioLLMConfig(models.Model):
+    """Studio-wide AI provider — staff configures; teachers need use_ai permission."""
+
+    PROVIDER_OPENAI = 'openai'
+    PROVIDER_ANTHROPIC = 'anthropic'
+    PROVIDER_OLLAMA = 'ollama'
+    PROVIDER_OPENAI_COMPATIBLE = 'openai_compatible'
+    PROVIDER_CHOICES = [
+        (PROVIDER_OPENAI, 'OpenAI'),
+        (PROVIDER_ANTHROPIC, 'Anthropic'),
+        (PROVIDER_OLLAMA, 'Ollama (local)'),
+        (PROVIDER_OPENAI_COMPATIBLE, 'OpenAI-compatible API'),
+    ]
+
+    provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, default=PROVIDER_OPENAI)
+    api_key = models.CharField(max_length=500, blank=True)
+    base_url = models.URLField(
+        blank=True,
+        help_text='Optional. Ollama default http://127.0.0.1:11434; custom for OpenAI-compatible hosts.',
+    )
+    model_name = models.CharField(max_length=120, default='gpt-4o-mini')
+    is_enabled = models.BooleanField(default=False)
+    max_tokens = models.PositiveIntegerField(default=500)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'studio LLM config'
+        verbose_name_plural = 'studio LLM config'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        status = 'on' if self.is_enabled else 'off'
+        return f'LLM ({self.provider}, {status})'
+
+
 class Session(models.Model):
+    MEETING_PROVIDER_CHOICES = [
+        ('none', 'No video link'),
+        ('google_meet', 'Google Meet'),
+        ('zoom', 'Zoom'),
+    ]
+
     teacher = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -79,6 +307,20 @@ class Session(models.Model):
         blank=True,
         related_name='sessions',
     )
+    class_offering = models.ForeignKey(
+        'ClassOffering',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sessions',
+    )
+    class_topic = models.ForeignKey(
+        'ClassTopic',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sessions',
+    )
     title = models.CharField(max_length=200)
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
@@ -86,6 +328,11 @@ class Session(models.Model):
     status = models.CharField(
         max_length=20,
         choices=[('open', 'Open'), ('cancelled', 'Cancelled')],
+    )
+    meeting_provider = models.CharField(
+        max_length=20,
+        choices=MEETING_PROVIDER_CHOICES,
+        default='google_meet',
     )
     meeting_url = models.URLField(blank=True)
     external_id = models.CharField(max_length=100, blank=True)
@@ -105,9 +352,24 @@ class Booking(models.Model):
         related_name='bookings_made',
     )
     session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name='bookings')
+    membership = models.ForeignKey(
+        'Membership',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='bookings',
+    )
     status = models.CharField(
         max_length=20,
         choices=[('confirmed', 'Confirmed'), ('cancelled', 'Cancelled')],
+    )
+    tickets_spent = models.PositiveIntegerField(default=0)
+    class_request = models.OneToOneField(
+        'ClassRequest',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='booking',
     )
     external_id = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -120,27 +382,216 @@ class Booking(models.Model):
         return f"{self.student.username} - {self.session.title} - {self.status}"
 
 
-class Membership(models.Model):
-    PLAN_CHOICES = [
-        ('basic', 'Basic'),
-        ('premium', 'Premium'),
+class ClassRequest(models.Model):
+    """Student-requested lesson during teacher availability — pending until approved."""
+
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_DENIED = 'denied'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_DENIED, 'Denied'),
+        (STATUS_CANCELLED, 'Cancelled'),
     ]
 
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='class_requests',
+    )
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='class_requests_received',
+    )
+    class_offering = models.ForeignKey(
+        ClassOffering,
+        on_delete=models.PROTECT,
+        related_name='class_requests',
+    )
+    class_topic = models.ForeignKey(
+        ClassTopic,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='class_requests',
+    )
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    tickets_requested = models.PositiveIntegerField()
+    membership = models.ForeignKey(
+        'Membership',
+        on_delete=models.PROTECT,
+        related_name='class_requests',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='class_requests',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.student.username} → {self.teacher.username} ({self.status})"
+
+
+class MembershipPlan(models.Model):
+    """Studio-defined membership tier — price and which catalog classes students may book."""
+
+    PLAN_SUBSCRIPTION = 'subscription'
+    PLAN_TICKET_PACK = 'ticket_pack'
+    PLAN_TYPE_CHOICES = [
+        (PLAN_SUBSCRIPTION, 'Subscription'),
+        (PLAN_TICKET_PACK, 'Ticket pack'),
+    ]
+
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    plan_type = models.CharField(
+        max_length=20,
+        choices=PLAN_TYPE_CHOICES,
+        default=PLAN_SUBSCRIPTION,
+    )
+    price_cents = models.PositiveIntegerField(default=0)
+    billing_period_days = models.PositiveIntegerField(default=30)
+    ticket_allowance = models.PositiveIntegerField(
+        default=10,
+        help_text='Tickets granted each time a student purchases one billing period.',
+    )
+    is_active = models.BooleanField(default=True)
+    allowed_classes = models.ManyToManyField(
+        ClassOffering,
+        blank=True,
+        related_name='membership_plans',
+        help_text='Leave empty to allow all active classes.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def includes_all_classes(self):
+        return not self.allowed_classes.all()
+
+
+class Membership(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='memberships',
     )
-    plan_type = models.CharField(max_length=20, choices=PLAN_CHOICES, default='basic')
+    plan = models.ForeignKey(
+        MembershipPlan,
+        on_delete=models.PROTECT,
+        related_name='memberships',
+    )
     is_active = models.BooleanField(default=True)
     valid_until = models.DateField(null=True, blank=True)
+    tickets_remaining = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ['-id']
 
     def __str__(self):
         status = 'active' if self.is_active else 'inactive'
-        return f"{self.user.username} — {self.plan_type} ({status})"
+        return f"{self.user.username} — {self.plan.name} ({status})"
+
+
+class Payment(models.Model):
+    """Membership purchase record — mock in sandbox, Stripe when configured."""
+
+    PROVIDER_MOCK = 'mock'
+    PROVIDER_STRIPE = 'stripe'
+    PROVIDER_CHOICES = [
+        (PROVIDER_MOCK, 'Mock'),
+        (PROVIDER_STRIPE, 'Stripe'),
+    ]
+
+    STATUS_PENDING = 'pending'
+    STATUS_COMPLETED = 'completed'
+    STATUS_FAILED = 'failed'
+    STATUS_REFUNDED = 'refunded'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_REFUNDED, 'Refunded'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='payments',
+    )
+    plan = models.ForeignKey(
+        MembershipPlan,
+        on_delete=models.PROTECT,
+        related_name='payments',
+    )
+    membership = models.ForeignKey(
+        Membership,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments',
+    )
+    amount_cents = models.PositiveIntegerField()
+    currency = models.CharField(max_length=3, default='usd')
+    quantity = models.PositiveIntegerField(
+        default=1,
+        help_text='Billing periods purchased (e.g. months).',
+    )
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default=PROVIDER_MOCK)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
+    stripe_checkout_session_id = models.CharField(max_length=200, blank=True)
+    stripe_payment_intent_id = models.CharField(max_length=200, blank=True)
+    description = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username} — {self.plan.name} — {self.amount_cents}¢ ({self.status})"
+
+
+def blog_image_upload_path(instance, filename):
+    return f'blog/{instance.pk or "draft"}/{filename}'
+
+
+class BlogPost(models.Model):
+    """Studio announcement shown on the home page."""
+
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='blog_posts',
+    )
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+    image = models.FileField(upload_to=blog_image_upload_path, blank=True)
+    is_published = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
 
 
 class Message(models.Model):
@@ -164,6 +615,26 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.subject} ({self.sender.username} → {self.recipient.username})"
+
+
+class GoogleCredential(models.Model):
+    """Per-user Google OAuth tokens for Calendar/Meet (Phase 20)."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='google_credential',
+    )
+    access_token = models.TextField(blank=True)
+    refresh_token = models.TextField(blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    scopes = models.TextField(blank=True)
+    google_email = models.CharField(max_length=254, blank=True)
+    connected_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Google credential for {self.user.username}'
 
 
 class CurriculumItem(models.Model):

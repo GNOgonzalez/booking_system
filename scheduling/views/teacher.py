@@ -3,10 +3,11 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from integrations.google.meet import create_meet_link
-from scheduling.forms import AvailabilityBlockForm, ClassTypeForm, SessionForm
-from scheduling.models import AvailabilityBlock, ClassType, Session
+from scheduling.forms import AvailabilityBlockForm, SessionForm, SpecialAvailabilityForm
+from scheduling.models import AvailabilityBlock, Session, SpecialAvailability
 from scheduling.services.availability import session_within_availability
+from scheduling.services.meetings import create_meeting_link
+from scheduling.services.sessions import apply_session_defaults
 from scheduling.views.common import require_group
 
 
@@ -23,14 +24,13 @@ def teacher_create_session(request):
             session = form.save(commit=False)
             session.teacher = user
             session.status = 'open'
-            if not session.title and session.class_type:
-                session.title = session.class_type.name
+            apply_session_defaults(session)
             if not session_within_availability(user, session.start_time, session.end_time):
-                messages.error(request, 'Session time is outside your availability blocks.')
+                messages.error(request, 'Session time is outside your weekly or special-day availability.')
             else:
                 session.save()
-                if not session.meeting_url:
-                    session.meeting_url = create_meet_link(session)
+                if session.meeting_provider != 'none' and not session.meeting_url:
+                    session.meeting_url = create_meeting_link(session)
                     session.save(update_fields=['meeting_url'])
                 messages.success(request, 'Session created.')
                 return redirect('teacher_session_list')
@@ -57,11 +57,18 @@ def teacher_availability_list(request):
         return denied
 
     blocks = AvailabilityBlock.objects.filter(teacher=request.user)
+    special_blocks = SpecialAvailability.objects.filter(teacher=request.user)
     form = AvailabilityBlockForm()
+    special_form = SpecialAvailabilityForm()
     return render(
         request,
         'scheduling/teacher_availability_list.html',
-        {'blocks': blocks, 'form': form},
+        {
+            'blocks': blocks,
+            'special_blocks': special_blocks,
+            'form': form,
+            'special_form': special_form,
+        },
     )
 
 
@@ -97,33 +104,31 @@ def teacher_availability_delete(request, block_id):
 
 
 @login_required
-def teacher_class_type_list(request):
-    denied = require_group(request.user, 'teacher')
-    if denied:
-        return denied
-
-    class_types = ClassType.objects.filter(teacher=request.user)
-    form = ClassTypeForm()
-    return render(
-        request,
-        'scheduling/teacher_class_type_list.html',
-        {'class_types': class_types, 'form': form},
-    )
-
-
-@login_required
-def teacher_class_type_create(request):
+def teacher_special_availability_create(request):
     denied = require_group(request.user, 'teacher')
     if denied:
         return denied
 
     if request.method == 'POST':
-        form = ClassTypeForm(request.POST)
+        form = SpecialAvailabilityForm(request.POST)
         if form.is_valid():
-            class_type = form.save(commit=False)
-            class_type.teacher = request.user
-            class_type.save()
-            messages.success(request, 'Class type added.')
+            block = form.save(commit=False)
+            block.teacher = request.user
+            block.save()
+            messages.success(request, 'Special availability added.')
         else:
-            messages.error(request, 'Could not add class type.')
-    return redirect('teacher_class_type_list')
+            messages.error(request, 'Could not add special availability.')
+    return redirect('teacher_availability_list')
+
+
+@login_required
+@require_POST
+def teacher_special_availability_delete(request, block_id):
+    denied = require_group(request.user, 'teacher')
+    if denied:
+        return denied
+
+    block = get_object_or_404(SpecialAvailability, pk=block_id, teacher=request.user)
+    block.delete()
+    messages.success(request, 'Special availability removed.')
+    return redirect('teacher_availability_list')

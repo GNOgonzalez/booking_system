@@ -1,17 +1,28 @@
 from django.utils import timezone
 
 from scheduling.models import Booking
-from scheduling.services.membership import has_active_membership
+from scheduling.services.membership import (
+    has_active_membership,
+    membership_for_booking,
+)
 from scheduling.services.notifications import (
     send_booking_cancellation,
     send_booking_confirmation,
 )
+from scheduling.services.tickets import (
+    refund_booking_tickets,
+    spend_tickets_for_session,
+)
 
 
 def can_book(user, session):
+    if not user.is_active:
+        return False
     if not user.groups.filter(name='student').exists():
         return False
     if not has_active_membership(user):
+        return False
+    if membership_for_booking(user, session) is None:
         return False
     if session.status != 'open':
         return False
@@ -29,15 +40,21 @@ def can_book(user, session):
 
 
 def create_booking(user, session):
-    if can_book(user, session):
-        booking = Booking.objects.create(
-            student=user,
-            session=session,
-            status='confirmed',
-        )
-        send_booking_confirmation(booking)
-        return True
-    return False
+    membership = membership_for_booking(user, session)
+    if membership is None or not can_book(user, session):
+        return False
+    ok, cost = spend_tickets_for_session(membership, session)
+    if not ok:
+        return False
+    booking = Booking.objects.create(
+        student=user,
+        session=session,
+        membership=membership,
+        status='confirmed',
+        tickets_spent=cost,
+    )
+    send_booking_confirmation(booking)
+    return True
 
 
 def can_cancel(user, booking):
@@ -58,6 +75,9 @@ def cancel_booking(user, booking):
 
     booking.status = 'cancelled'
     booking.save()
+
+    if booking.class_request_id is None:
+        refund_booking_tickets(booking)
     send_booking_cancellation(booking)
 
     session = booking.session

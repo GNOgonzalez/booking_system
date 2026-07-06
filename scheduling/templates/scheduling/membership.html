@@ -11,7 +11,7 @@
 
   {% if membership %}
     <p class="success">
-      Active: {{ membership.plan_type|title }}
+      Active: {{ membership.plan.name }}
       {% if membership.valid_until %} — valid until {{ membership.valid_until }}{% endif %}
     </p>
   {% else %}
@@ -24,9 +24,11 @@
     <p>
       <label>
         Plan:
-        <select name="plan_type">
-          {% for plan, cents in prices.items %}
-            <option value="{{ plan }}">{{ plan|title }} — ${{ cents|floatformat:0 }}¢/mo</option>
+        <select name="plan_id" required>
+          {% for plan in plans %}
+            <option value="{{ plan.id }}">
+              {{ plan.name }} — ${{ plan.price_cents|floatformat:-2 }}/{{ plan.billing_period_days }} days
+            </option>
           {% endfor %}
         </select>
       </label>

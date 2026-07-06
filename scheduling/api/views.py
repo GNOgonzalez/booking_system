@@ -1,7 +1,11 @@
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -10,21 +14,58 @@ from scheduling.api.serializers import (
     AvailabilityBlockSerializer,
     BookingCreateSerializer,
     BookingSerializer,
-    ClassTypeSerializer,
+    ClassOfferingSerializer,
     CurriculumItemSerializer,
+    MembershipPlanPublicSerializer,
     MembershipPurchaseSerializer,
     MembershipSerializer,
-    MeUpdateSerializer,
     MessageSerializer,
+    MeUpdateSerializer,
     PasswordChangeSerializer,
     SessionSerializer,
+    SpecialAvailabilitySerializer,
+    StudentOptionSerializer,
     serialize_me,
 )
-from scheduling.models import AvailabilityBlock, Booking, ClassType, CurriculumItem, Message, Session
+from scheduling.models import (
+    AvailabilityBlock,
+    Booking,
+    ClassOffering,
+    CurriculumItem,
+    MembershipPlan,
+    Message,
+    Profile,
+    Session,
+    SpecialAvailability,
+)
+from scheduling.services.availability import session_within_availability
 from scheduling.services.booking import cancel_booking, create_booking
-from scheduling.services.membership import active_membership_for
-from scheduling.services.payments import purchase_membership
-from integrations.google.meet import create_meet_link
+from scheduling.services.meetings import create_meeting_link
+from scheduling.services.membership import (
+    active_memberships_for,
+    allowed_class_ids_for_user,
+    total_tickets_remaining,
+)
+from scheduling.services.payments import get_available_plans, payment_mode, purchase_membership
+from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
+from scheduling.services.teacher_permissions import (
+    TEACHER_PERMISSION_DEFS,
+    permission_denied_response,
+    permissions_for_teacher,
+    teacher_can,
+)
+
+User = get_user_model()
+
+
+class TeacherStudentListView(generics.ListAPIView):
+    """Students in the student group — for teacher dropdowns."""
+
+    permission_classes = [IsTeacher]
+    serializer_class = StudentOptionSerializer
+
+    def get_queryset(self):
+        return User.objects.filter(groups__name='student', is_active=True).order_by('username')
 
 
 class OpenSessionListView(generics.ListAPIView):
@@ -32,10 +73,19 @@ class OpenSessionListView(generics.ListAPIView):
     serializer_class = SessionSerializer
 
     def get_queryset(self):
-        return Session.objects.filter(
+        qs = Session.objects.filter(
             status='open',
             start_time__gte=timezone.now(),
+            teacher__is_active=True,
         )
+        allowed_ids = allowed_class_ids_for_user(self.request.user)
+        if allowed_ids is not None:
+            if not allowed_ids:
+                return qs.none()
+            qs = qs.filter(
+                Q(class_offering__isnull=True) | Q(class_offering_id__in=allowed_ids),
+            )
+        return sessions_for_list(qs)
 
 
 class MyBookingListView(generics.ListAPIView):
@@ -43,7 +93,10 @@ class MyBookingListView(generics.ListAPIView):
     serializer_class = BookingSerializer
 
     def get_queryset(self):
-        return Booking.objects.filter(student=self.request.user, status='confirmed')
+        return (
+            Booking.objects.filter(student=self.request.user, status='confirmed')
+            .select_related('session', 'session__teacher', 'session__class_offering', 'session__class_topic')
+        )
 
 
 class BookingCreateView(APIView):
@@ -86,12 +139,118 @@ class TeacherSessionListCreateView(generics.ListCreateAPIView):
     serializer_class = SessionSerializer
 
     def get_queryset(self):
-        return Session.objects.filter(teacher=self.request.user)
+        qs = Session.objects.filter(teacher=self.request.user)
+        student_id = self.request.query_params.get('student')
+        if student_id:
+            qs = qs.filter(
+                bookings__student_id=student_id,
+                bookings__status='confirmed',
+            ).distinct()
+        return sessions_for_list(qs)
+
+    def create(self, request, *args, **kwargs):
+        if not teacher_can(request.user, 'manage_schedule'):
+            return permission_denied_response('manage_schedule')
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        start = serializer.validated_data['start_time']
+        end = serializer.validated_data['end_time']
+        if not session_within_availability(request.user, start, end):
+            return Response(
+                {'detail': 'Session time is outside your availability.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def perform_create(self, serializer):
         session = serializer.save(teacher=self.request.user, status='open')
-        session.meeting_url = create_meet_link(session)
+        session.meeting_url = create_meeting_link(session)
         session.save(update_fields=['meeting_url'])
+
+
+class TeacherSessionDetailView(APIView):
+    permission_classes = [IsTeacher]
+
+    def get_session(self, request, session_id):
+        return Session.objects.filter(pk=session_id, teacher=request.user).first()
+
+    def patch(self, request, session_id):
+        if not teacher_can(request.user, 'manage_schedule'):
+            return permission_denied_response('manage_schedule')
+        session = self.get_session(request, session_id)
+        if session is None:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SessionSerializer(
+            session,
+            data=request.data,
+            partial=True,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+        start = serializer.validated_data.get('start_time', session.start_time)
+        end = serializer.validated_data.get('end_time', session.end_time)
+        if 'start_time' in serializer.validated_data or 'end_time' in serializer.validated_data:
+            if not session_within_availability(request.user, start, end):
+                return Response(
+                    {'detail': 'Session time is outside your availability.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        ok, error = update_session(
+            session,
+            request.user,
+            class_offering=serializer.validated_data.get('class_offering'),
+            start_time=serializer.validated_data.get('start_time'),
+            end_time=serializer.validated_data.get('end_time'),
+            capacity=serializer.validated_data.get('capacity'),
+        )
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        session.refresh_from_db()
+        return Response(SessionSerializer(session).data)
+
+    def delete(self, request, session_id):
+        if not teacher_can(request.user, 'manage_schedule'):
+            return permission_denied_response('manage_schedule')
+        session = self.get_session(request, session_id)
+        if session is None:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+        ok, error = cancel_session(session, request.user)
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(SessionSerializer(session).data)
+
+
+class TeacherSessionStudentsView(APIView):
+    """Confirmed students for one of the teacher's sessions (for report dropdowns)."""
+
+    permission_classes = [IsTeacher]
+
+    def get(self, request, session_id):
+        session = Session.objects.filter(pk=session_id, teacher=request.user).first()
+        if session is None:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bookings = Booking.objects.filter(
+            session=session,
+            status='confirmed',
+        ).select_related('student').order_by('student__username')
+
+        students = []
+        seen = set()
+        for booking in bookings:
+            user = booking.student
+            if user.id in seen:
+                continue
+            seen.add(user.id)
+            profile = Profile.objects.filter(user=user).first()
+            if profile and profile.display_name:
+                label = f"{profile.display_name} ({user.username})"
+            else:
+                label = user.username
+            students.append({'id': user.id, 'username': user.username, 'label': label})
+        return Response(students)
 
 
 class TeacherAvailabilityListCreateView(generics.ListCreateAPIView):
@@ -102,26 +261,123 @@ class TeacherAvailabilityListCreateView(generics.ListCreateAPIView):
         return AvailabilityBlock.objects.filter(teacher=self.request.user)
 
     def perform_create(self, serializer):
+        if not teacher_can(self.request.user, 'manage_availability'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You do not have permission to set availability.')
         serializer.save(teacher=self.request.user)
 
 
-class TeacherAvailabilityDeleteView(generics.DestroyAPIView):
+class TeacherAvailabilityUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsTeacher]
     serializer_class = AvailabilityBlockSerializer
+    http_method_names = ['patch', 'put', 'delete', 'options', 'head']
 
     def get_queryset(self):
         return AvailabilityBlock.objects.filter(teacher=self.request.user)
 
+    def update(self, request, *args, **kwargs):
+        if not teacher_can(request.user, 'manage_availability'):
+            return permission_denied_response('manage_availability')
+        return super().update(request, *args, **kwargs)
 
-class TeacherClassTypeListCreateView(generics.ListCreateAPIView):
+    def destroy(self, request, *args, **kwargs):
+        if not teacher_can(request.user, 'manage_availability'):
+            return permission_denied_response('manage_availability')
+        return super().destroy(request, *args, **kwargs)
+
+
+class TeacherSpecialAvailabilityUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsTeacher]
-    serializer_class = ClassTypeSerializer
+    serializer_class = SpecialAvailabilitySerializer
+    http_method_names = ['patch', 'put', 'delete', 'options', 'head']
 
     def get_queryset(self):
-        return ClassType.objects.filter(teacher=self.request.user)
+        return SpecialAvailability.objects.filter(teacher=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        if not teacher_can(request.user, 'manage_availability'):
+            return permission_denied_response('manage_availability')
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not teacher_can(request.user, 'manage_availability'):
+            return permission_denied_response('manage_availability')
+        return super().destroy(request, *args, **kwargs)
+
+
+class TeacherSpecialAvailabilityListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsTeacher]
+    serializer_class = SpecialAvailabilitySerializer
+
+    def get_queryset(self):
+        return SpecialAvailability.objects.filter(teacher=self.request.user)
 
     def perform_create(self, serializer):
+        if not teacher_can(self.request.user, 'manage_availability'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You do not have permission to set availability.')
         serializer.save(teacher=self.request.user)
+
+
+class TeacherClassOfferingListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsTeacher]
+    serializer_class = ClassOfferingSerializer
+
+    def get_queryset(self):
+        return ClassOffering.objects.filter(teacher=self.request.user).prefetch_related('topics').order_by('-is_active', 'subject')
+
+    def perform_create(self, serializer):
+        if not teacher_can(self.request.user, 'manage_classes'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You do not have permission to manage classes.')
+        serializer.save(teacher=self.request.user)
+
+
+class TeacherClassOfferingDetailView(APIView):
+    permission_classes = [IsTeacher]
+
+    def get_offering(self, request, pk):
+        return ClassOffering.objects.filter(pk=pk, teacher=request.user).first()
+
+    def patch(self, request, pk):
+        if not teacher_can(request.user, 'manage_classes'):
+            return permission_denied_response('manage_classes')
+        offering = self.get_offering(request, pk)
+        if offering is None:
+            return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ClassOfferingSerializer(
+            offering,
+            data=request.data,
+            partial=True,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, pk):
+        if not teacher_can(request.user, 'manage_classes'):
+            return permission_denied_response('manage_classes')
+        offering = self.get_offering(request, pk)
+        if offering is None:
+            return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
+        offering.is_active = False
+        offering.save(update_fields=['is_active'])
+        return Response(ClassOfferingSerializer(offering).data)
+
+
+class TeacherPermissionsView(APIView):
+    """Current teacher's capability flags (read-only for teachers)."""
+
+    permission_classes = [IsTeacher]
+
+    def get(self, request):
+        perms = permissions_for_teacher(request.user)
+        defs = [
+            {'key': key, 'label': label, 'description': desc, 'is_enabled': perms[key]}
+            for key, label, desc in TEACHER_PERMISSION_DEFS
+        ]
+        return Response(defs)
 
 
 class InboxListView(generics.ListAPIView):
@@ -157,6 +413,38 @@ class MeView(APIView):
         return Response(serialize_me(request.user))
 
 
+class MarkdownPreviewView(APIView):
+    """Server-rendered preview so client display always matches publish rules."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from scheduling.services.markdown import render_safe_markdown
+
+        body = request.data.get('body', '')
+        if not isinstance(body, str):
+            return Response({'detail': 'body must be a string.'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(body) > 50000:
+            return Response({'detail': 'Preview is limited to 50,000 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'html': render_safe_markdown(body)})
+
+
+class MeOnboardingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from scheduling.services.onboarding import onboarding_for_user
+
+        return Response(onboarding_for_user(request.user))
+
+    def patch(self, request):
+        from scheduling.services.onboarding import dismiss_onboarding, onboarding_for_user
+
+        if request.data.get('dismissed'):
+            return Response(dismiss_onboarding(request.user))
+        return Response(onboarding_for_user(request.user))
+
+
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -171,21 +459,108 @@ class MembershipView(APIView):
     permission_classes = [IsStudent]
 
     def get(self, request):
-        membership = active_membership_for(request.user)
-        if membership is None:
-            return Response({'active': False})
-        data = MembershipSerializer(membership).data
-        data['active'] = True
-        return Response(data)
+        memberships = active_memberships_for(request.user)
+        if not memberships:
+            return Response({'active': False, 'memberships': [], 'tickets_remaining': 0})
+        serialized = MembershipSerializer(memberships, many=True).data
+        primary = serialized[0]
+        return Response({
+            'active': True,
+            'memberships': serialized,
+            'tickets_remaining': total_tickets_remaining(request.user),
+            **primary,
+        })
 
     def post(self, request):
         serializer = MembershipPurchaseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         membership, error = purchase_membership(
             request.user,
-            plan_type=serializer.validated_data['plan_type'],
+            plan_id=serializer.validated_data['plan_id'],
             months=serializer.validated_data['months'],
+            membership_id=serializer.validated_data.get('membership_id'),
         )
         if error:
             return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+
+class MembershipPlanCatalogView(generics.ListAPIView):
+    """Active membership plans students can purchase."""
+
+    permission_classes = [IsStudent]
+    serializer_class = MembershipPlanPublicSerializer
+
+    def get_queryset(self):
+        return get_available_plans()
+
+
+class MembershipPaymentConfigView(APIView):
+    """How payments run in this environment (mock vs Stripe)."""
+
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        from integrations.stripe.client import stripe_enabled
+        return Response({
+            'mode': payment_mode(),
+            'publishable_key': settings.STRIPE.get('PUBLISHABLE_KEY', '') or None,
+            'checkout_available': stripe_enabled(),
+            'webhook_configured': bool(settings.STRIPE.get('WEBHOOK_SECRET', '')),
+        })
+
+
+class MembershipCheckoutView(APIView):
+    """Start Stripe Checkout for a membership purchase."""
+
+    permission_classes = [IsStudent]
+
+    def post(self, request):
+        from integrations.stripe.checkout import create_checkout_session
+
+        serializer = MembershipPurchaseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        plan = MembershipPlan.objects.filter(
+            pk=serializer.validated_data['plan_id'],
+            is_active=True,
+        ).first()
+        if plan is None:
+            return Response({'detail': 'Unknown or inactive plan.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result, error = create_checkout_session(
+            request.user,
+            plan,
+            months=serializer.validated_data['months'],
+            membership_id=serializer.validated_data.get('membership_id'),
+            success_url=request.data.get('success_url', ''),
+            cancel_url=request.data.get('cancel_url', ''),
+        )
+        if error:
+            code = status.HTTP_400_BAD_REQUEST
+            if 'Stripe API error' in error or 'Stripe did not return' in error:
+                code = status.HTTP_502_BAD_GATEWAY
+            elif 'not configured' in error.lower():
+                code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return Response({'detail': error}, status=code)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class StripeWebhookView(APIView):
+    """Stripe webhook endpoint — no JWT; verified by Stripe-Signature."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from integrations.stripe.webhooks import handle_webhook_request
+
+        payload = request.body
+        signature = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+        ok, message = handle_webhook_request(payload, signature)
+        if not ok:
+            code = status.HTTP_400_BAD_REQUEST
+            if 'not configured' in message.lower():
+                code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return Response({'detail': message}, status=code)
+        return Response({'detail': message})

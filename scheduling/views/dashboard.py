@@ -1,6 +1,7 @@
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 
+from scheduling.services.membership import active_memberships_for
 from scheduling.views.common import require_group
 
 
@@ -33,7 +34,14 @@ def student_dashboard(request):
         return denied
     if request.user.groups.filter(name='teacher').exists():
         return redirect('teacher_dashboard')
-    return render(request, 'scheduling/student_dashboard.html')
+    memberships = active_memberships_for(request.user)
+    return render(
+        request,
+        'scheduling/student_dashboard.html',
+        {
+            'memberships': memberships,
+        },
+    )
 
 
 @login_required

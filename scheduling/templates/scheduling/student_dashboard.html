@@ -4,7 +4,7 @@
 
 {% block nav %}
   | <a href="{% url 'student_dashboard' %}">Dashboard</a>
-  | <a href="{% url 'student_session_list' %}">Open sessions</a>
+  | <a href="{% url 'student_session_list' %}">Book a lesson</a>
   | <a href="{% url 'student_booking_list' %}">My bookings</a>
   | <a href="{% url 'membership_page' %}">Membership</a>
   | <a href="{% url 'progress_student' %}">Progress</a>
@@ -15,10 +15,28 @@
 {% block content %}
   <h1>Student Dashboard</h1>
   <p>Welcome, {{ user.username }}.</p>
+
+  {% if memberships %}
+    <h2>Your memberships</h2>
+    {% for membership in memberships %}
+      <div class="card">
+        <h3>{{ membership.plan.name }}</h3>
+        <p><strong>{{ membership.tickets_remaining }}</strong> booking ticket{{ membership.tickets_remaining|pluralize }} remaining</p>
+        {% if membership.valid_until %}
+          <p>Valid until {{ membership.valid_until }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+    <p>
+      <a href="{% url 'student_session_list' %}">Book a lesson</a>
+      · <a href="{% url 'membership_page' %}">Add or extend a membership</a>
+      · <a href="{% url 'student_booking_list' %}">My bookings</a>
+    </p>
+  {% else %}
+    <p>You have no active membership. <a href="{% url 'membership_page' %}">Get a membership</a> to start booking.</p>
+  {% endif %}
+
   <ul>
-    <li><a href="{% url 'student_session_list' %}">Browse open sessions</a></li>
-    <li><a href="{% url 'student_booking_list' %}">My bookings</a></li>
-    <li><a href="{% url 'membership_page' %}">Membership</a></li>
     <li><a href="{% url 'progress_student' %}">My progress</a></li>
     <li><a href="{% url 'inbox' %}">Inbox</a></li>
     <li><a href="{% url 'curriculum_list' %}">Curriculum</a></li>

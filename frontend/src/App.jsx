@@ -1,50 +1,118 @@
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { clearTokens, getMe, getTokens, login } from './api.js'
 import LoginPage from './pages/LoginPage.jsx'
-import ProfilePage from './pages/ProfilePage.jsx'
-import StudentSessionsPage from './pages/StudentSessionsPage.jsx'
-import StudentBookingsPage from './pages/StudentBookingsPage.jsx'
-import StudentProgressPage from './pages/StudentProgressPage.jsx'
-import MembershipPage from './pages/MembershipPage.jsx'
-import TeacherSessionsPage from './pages/TeacherSessionsPage.jsx'
-import TeacherCreateSessionPage from './pages/TeacherCreateSessionPage.jsx'
-import TeacherAvailabilityPage from './pages/TeacherAvailabilityPage.jsx'
-import TeacherClassTypesPage from './pages/TeacherClassTypesPage.jsx'
-import TeacherProgressPage from './pages/TeacherProgressPage.jsx'
-import InboxPage from './pages/InboxPage.jsx'
-import CurriculumPage from './pages/CurriculumPage.jsx'
+import BlogFeed from './components/BlogFeed.jsx'
+import OnboardingChecklist from './components/OnboardingChecklist.jsx'
+import { BrandingProvider, useBranding } from './hooks/useBranding.jsx'
+import { GlossaryProvider, useGlossary } from './hooks/useGlossary.jsx'
+import { applyTheme } from './hooks/useTheme.js'
+
+const ProfilePage = lazy(() => import('./pages/ProfilePage.jsx'))
+const StudentSessionsPage = lazy(() => import('./pages/StudentSessionsPage.jsx'))
+const StudentRequestClassPage = lazy(() => import('./pages/StudentRequestClassPage.jsx'))
+const StudentBookingsPage = lazy(() => import('./pages/StudentBookingsPage.jsx'))
+const StudentProgressPage = lazy(() => import('./pages/StudentProgressPage.jsx'))
+const StudentHomeworkPage = lazy(() => import('./pages/StudentHomeworkPage.jsx'))
+const MembershipPage = lazy(() => import('./pages/MembershipPage.jsx'))
+const TeacherSessionsPage = lazy(() => import('./pages/TeacherSessionsPage.jsx'))
+const TeacherCreateSessionPage = lazy(() => import('./pages/TeacherCreateSessionPage.jsx'))
+const TeacherAvailabilityPage = lazy(() => import('./pages/TeacherAvailabilityPage.jsx'))
+const TeacherClassesPage = lazy(() => import('./pages/TeacherClassesPage.jsx'))
+const TeacherProgressPage = lazy(() => import('./pages/TeacherProgressPage.jsx'))
+const TeacherHomeworkPage = lazy(() => import('./pages/TeacherHomeworkPage.jsx'))
+const TeacherClassRequestsPage = lazy(() => import('./pages/TeacherClassRequestsPage.jsx'))
+const StaffDashboardPage = lazy(() => import('./pages/StaffDashboardPage.jsx'))
+const StaffMetricsPage = lazy(() => import('./pages/StaffMetricsPage.jsx'))
+const StaffSchedulePage = lazy(() => import('./pages/StaffSchedulePage.jsx'))
+const StaffTeacherLayout = lazy(() => import('./pages/StaffTeacherLayout.jsx'))
+const StaffCreateClassPage = lazy(() => import('./pages/StaffCreateClassPage.jsx'))
+const StaffStudentsPage = lazy(() => import('./pages/StaffStudentsPage.jsx'))
+const StaffTeacherPermissionsPage = lazy(() => import('./pages/StaffTeacherPermissionsPage.jsx'))
+const InboxPage = lazy(() => import('./pages/InboxPage.jsx'))
+const CurriculumPage = lazy(() => import('./pages/CurriculumPage.jsx'))
+const StaffGlossaryPage = lazy(() => import('./pages/StaffGlossaryPage.jsx'))
+const StaffLLMSettingsPage = lazy(() => import('./pages/StaffLLMSettingsPage.jsx'))
+const StaffMembershipPlansPage = lazy(() => import('./pages/StaffMembershipPlansPage.jsx'))
+const StaffReportsPage = lazy(() => import('./pages/StaffReportsPage.jsx'))
+const StaffBrandingPage = lazy(() => import('./pages/StaffBrandingPage.jsx'))
+const BlogManagePage = lazy(() => import('./pages/BlogManagePage.jsx'))
+const StudentHomeDashboard = lazy(() => import('./pages/StudentHomeDashboard.jsx'))
+
+function PageLoader() {
+  return <p className="page-intro">Loading…</p>
+}
 
 function Sidebar({ me, onLogout }) {
+  const { label, labels } = useGlossary()
+  const { branding } = useBranding()
   const roles = me?.roles || []
   const isStudent = roles.includes('student')
   const isTeacher = roles.includes('teacher')
+  const isStaff = roles.includes('staff')
   const displayName = me?.display_name || me?.username || 'Account'
+  const tp = me?.teacher_permissions
+  const can = (key) => !tp || tp[key] !== false
+  const canManageBlog = isStaff || (isTeacher && can('manage_blog'))
 
   return (
     <aside className="sidebar">
-      <div className="brand">Booking Studio</div>
+      <div className="brand">
+        {branding.logo_url && (
+          <img src={branding.logo_url} alt="" className="branding-logo branding-logo--sidebar" />
+        )}
+        <span>{branding.display_name}</span>
+      </div>
 
       <NavLink to="/" end className="nav-link">Home</NavLink>
+      {canManageBlog && (
+        <NavLink to="/blog/manage" className="nav-link">Blog posts</NavLink>
+      )}
 
       {isStudent && (
         <>
-          <div className="nav-section">Student</div>
-          <NavLink to="/sessions" className="nav-link">Open sessions</NavLink>
-          <NavLink to="/bookings" className="nav-link">My bookings</NavLink>
+          <div className="nav-section">{label('student')}</div>
+          <NavLink to="/sessions" className="nav-link">Book a lesson</NavLink>
+          <NavLink to="/sessions/request" className="nav-link">Request a class</NavLink>
+          <NavLink to="/bookings" className="nav-link">My {labels('booking').toLowerCase()}</NavLink>
           <NavLink to="/membership" className="nav-link">Membership</NavLink>
           <NavLink to="/progress" className="nav-link">My progress</NavLink>
+          <NavLink to="/homework" className="nav-link">Homework</NavLink>
+        </>
+      )}
+
+      {isStaff && (
+        <>
+          <div className="nav-section">Staff</div>
+          <NavLink to="/staff" end className="nav-link">Dashboard</NavLink>
+          <NavLink to="/staff/schedule" className="nav-link">{label('studio')} schedule</NavLink>
+          <NavLink to="/staff/classes/new" className="nav-link">Create {label('class').toLowerCase()}</NavLink>
+          <NavLink to="/staff/students" className="nav-link">{labels('student')}</NavLink>
+          <NavLink to="/staff/memberships" className="nav-link">Memberships</NavLink>
+          <NavLink to="/staff/reports" className="nav-link">Reports</NavLink>
+          <NavLink to="/staff/metrics" className="nav-link">{label('studio')} {labels('metric').toLowerCase()}</NavLink>
+          <NavLink to="/staff/glossary" className="nav-link">Glossary</NavLink>
+          <NavLink to="/staff/branding" className="nav-link">Sign-in branding</NavLink>
+          <NavLink to="/staff/ai" className="nav-link">AI settings</NavLink>
         </>
       )}
 
       {isTeacher && (
         <>
-          <div className="nav-section">Teacher</div>
-          <NavLink to="/teacher/sessions" className="nav-link">My sessions</NavLink>
-          <NavLink to="/teacher/sessions/new" className="nav-link">New session</NavLink>
-          <NavLink to="/teacher/availability" className="nav-link">Availability</NavLink>
-          <NavLink to="/teacher/class-types" className="nav-link">Class types</NavLink>
-          <NavLink to="/teacher/progress" className="nav-link">Student reports</NavLink>
+          <div className="nav-section">{label('teacher')}</div>
+          <NavLink to="/teacher/sessions" className="nav-link">My {labels('session').toLowerCase()}</NavLink>
+          <NavLink to="/teacher/requests" className="nav-link">Class requests</NavLink>
+          {can('manage_schedule') && (
+            <NavLink to="/teacher/sessions/new" className="nav-link">New {label('session').toLowerCase()}</NavLink>
+          )}
+          <NavLink to="/teacher/classes" className="nav-link">{labels('class')}</NavLink>
+          {can('manage_availability') && (
+            <NavLink to="/teacher/availability" className="nav-link">{label('availability')}</NavLink>
+          )}
+          <NavLink to="/teacher/progress" className="nav-link">{label('student')} {labels('report').toLowerCase()}</NavLink>
+          {can('assign_homework') && (
+            <NavLink to="/teacher/homework" className="nav-link">Homework</NavLink>
+          )}
         </>
       )}
 
@@ -66,18 +134,48 @@ function Sidebar({ me, onLogout }) {
 
 function HomePage({ me }) {
   const roles = me?.roles || []
+  const { label, labels } = useGlossary()
+  const isStudentOnly = roles.includes('student') && !roles.includes('staff') && !roles.includes('teacher')
+  const isStaff = roles.includes('staff')
+  const isTeacher = roles.includes('teacher')
+  const tp = me?.teacher_permissions
+  const canManageBlog = isStaff || (isTeacher && (!tp || tp.manage_blog !== false))
+
   return (
     <div>
       <h1>Welcome{me?.display_name ? `, ${me.display_name}` : ''}</h1>
       <p className="page-intro">
-        {roles.includes('teacher')
-          ? 'Manage your sessions, availability, and student progress.'
-          : 'Browse open sessions, manage bookings, and track your progress.'}
+        {roles.includes('staff')
+          ? `Manage ${labels('teacher').toLowerCase()}, schedules, ${labels('class').toLowerCase()}, and ${label('studio').toLowerCase()}-wide settings.`
+          : roles.includes('teacher')
+            ? `Manage your ${labels('session').toLowerCase()}, ${label('availability').toLowerCase()}, and ${label('student').toLowerCase()} progress.`
+            : `Your home base for booking lessons, tracking progress, and managing your membership.`}
       </p>
+
+      <BlogFeed canManage={canManageBlog} />
+
+      <OnboardingChecklist />
+
+      {isStudentOnly && (
+        <Suspense fallback={<PageLoader />}>
+          <StudentHomeDashboard />
+        </Suspense>
+      )}
+      {roles.includes('staff') && (
+        <div className="card">
+          <div className="card-title">Staff tools</div>
+          <p className="card-meta">
+            Open the staff dashboard to manage any teacher&apos;s schedule and edit metric names.
+          </p>
+          <NavLink to="/staff" className="btn secondary">Open staff dashboard</NavLink>
+        </div>
+      )}
+      {!roles.includes('staff') && !isStudentOnly && (
       <div className="card">
         <div className="card-title">Getting started</div>
         <p className="card-meta">Use the menu on the left to navigate. Your role determines what you can do.</p>
       </div>
+      )}
     </div>
   )
 }
@@ -97,6 +195,20 @@ function AppRoutes() {
     loadMe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed])
+
+  useEffect(() => {
+    if (me?.theme) {
+      applyTheme(me.theme)
+    }
+  }, [me?.theme])
+
+  useEffect(() => {
+    if (!me || me.theme !== 'system') return undefined
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => applyTheme('system')
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [me?.theme])
 
   const handleLogin = async (username, password) => {
     await login(username, password)
@@ -121,30 +233,64 @@ function AppRoutes() {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar me={me} onLogout={handleLogout} />
-      <main className="main">
-        <Routes>
-          <Route path="/" element={<HomePage me={me} />} />
-          <Route path="/sessions" element={<StudentSessionsPage />} />
-          <Route path="/bookings" element={<StudentBookingsPage />} />
-          <Route path="/membership" element={<MembershipPage />} />
-          <Route path="/progress" element={<StudentProgressPage />} />
-          <Route path="/teacher/sessions" element={<TeacherSessionsPage />} />
-          <Route path="/teacher/sessions/new" element={<TeacherCreateSessionPage />} />
-          <Route path="/teacher/availability" element={<TeacherAvailabilityPage />} />
-          <Route path="/teacher/class-types" element={<TeacherClassTypesPage />} />
-          <Route path="/teacher/progress" element={<TeacherProgressPage />} />
-          <Route path="/inbox" element={<InboxPage />} />
-          <Route path="/curriculum" element={<CurriculumPage />} />
-          <Route path="/profile" element={<ProfilePage onSaved={loadMe} />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-    </div>
+    <GlossaryProvider>
+      <div className="app-shell">
+        <Sidebar me={me} onLogout={handleLogout} />
+        <main className="main">
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<HomePage me={me} />} />
+              <Route path="/blog/manage" element={<BlogManagePage />} />
+              <Route path="/sessions" element={<StudentSessionsPage />} />
+              <Route path="/sessions/request" element={<StudentRequestClassPage />} />
+              <Route path="/bookings" element={<StudentBookingsPage />} />
+              <Route path="/membership" element={<MembershipPage />} />
+              <Route path="/progress" element={<StudentProgressPage />} />
+              <Route path="/homework" element={<StudentHomeworkPage />} />
+              <Route path="/teacher/sessions" element={<TeacherSessionsPage />} />
+              <Route path="/teacher/requests" element={<TeacherClassRequestsPage />} />
+              <Route path="/teacher/sessions/new" element={<TeacherCreateSessionPage />} />
+              <Route path="/teacher/classes" element={<TeacherClassesPage />} />
+              <Route path="/teacher/availability" element={<TeacherAvailabilityPage />} />
+              <Route path="/teacher/progress" element={<TeacherProgressPage />} />
+              <Route path="/teacher/homework" element={<TeacherHomeworkPage />} />
+              <Route path="/staff" element={<StaffDashboardPage />} />
+              <Route path="/staff/schedule" element={<StaffSchedulePage />} />
+              <Route path="/staff/classes/new" element={<StaffCreateClassPage />} />
+              <Route path="/staff/students" element={<StaffStudentsPage />} />
+              <Route path="/staff/memberships" element={<StaffMembershipPlansPage />} />
+              <Route path="/staff/reports" element={<StaffReportsPage />} />
+              <Route path="/staff/metrics" element={<StaffMetricsPage />} />
+              <Route path="/staff/glossary" element={<StaffGlossaryPage />} />
+              <Route path="/staff/branding" element={<StaffBrandingPage />} />
+              <Route path="/staff/ai" element={<StaffLLMSettingsPage />} />
+              <Route path="/staff/teachers/:teacherId" element={<StaffTeacherLayout />}>
+                <Route index element={<Navigate to="sessions" replace />} />
+                <Route path="sessions" element={<TeacherSessionsPage />} />
+                <Route path="requests" element={<TeacherClassRequestsPage />} />
+                <Route path="sessions/new" element={<TeacherCreateSessionPage />} />
+                <Route path="classes" element={<TeacherClassesPage />} />
+                <Route path="availability" element={<TeacherAvailabilityPage />} />
+                <Route path="progress" element={<TeacherProgressPage />} />
+                <Route path="homework" element={<TeacherHomeworkPage />} />
+                <Route path="permissions" element={<StaffTeacherPermissionsPage />} />
+              </Route>
+              <Route path="/inbox" element={<InboxPage />} />
+              <Route path="/curriculum" element={<CurriculumPage />} />
+              <Route path="/profile" element={<ProfilePage onSaved={loadMe} />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
+        </main>
+      </div>
+    </GlossaryProvider>
   )
 }
 
 export default function App() {
-  return <AppRoutes />
+  return (
+    <BrandingProvider>
+      <AppRoutes />
+    </BrandingProvider>
+  )
 }

@@ -9,7 +9,7 @@ from scheduling.models import Booking, Session
 from scheduling.services.booking import cancel_booking, create_booking
 from scheduling.services.calendar import session_to_ics
 from scheduling.services.membership import active_membership_for
-from scheduling.services.payments import get_plan_prices, purchase_membership
+from scheduling.services.payments import get_available_plans, purchase_membership
 from scheduling.views.common import require_group
 
 
@@ -91,7 +91,7 @@ def membership_page(request):
         'scheduling/membership.html',
         {
             'membership': active_membership_for(request.user),
-            'prices': get_plan_prices(),
+            'plans': get_available_plans(),
         },
     )
 
@@ -103,10 +103,13 @@ def membership_purchase(request):
     if denied:
         return denied
 
-    plan = request.POST.get('plan_type', 'basic')
-    membership, error = purchase_membership(request.user, plan_type=plan)
+    plan_id = request.POST.get('plan_id')
+    if not plan_id:
+        messages.error(request, 'Choose a plan.')
+        return redirect('membership_page')
+    membership, error = purchase_membership(request.user, plan_id=int(plan_id))
     if error:
         messages.error(request, error)
     else:
-        messages.success(request, f'{membership.plan_type.title()} membership active.')
+        messages.success(request, f'{membership.plan.name} membership active.')
     return redirect('membership_page')

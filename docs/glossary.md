@@ -290,6 +290,18 @@ Postgres role booking_user → booking_dev   ← database layer
 
 ---
 
+## Studio glossary (app feature)
+
+Separate from this developer glossary doc.
+
+- **Model:** `StudioGlossary` in `scheduling/models.py`
+- **Purpose:** Staff rename UI terms app-wide (e.g. students → clients, classes → sessions)
+- **API:** `GET /api/glossary/` (all users), `GET/PATCH /api/staff/glossary/` (staff)
+- **React:** `useGlossary.jsx` + `StaffGlossaryPage`
+- **Keys:** `student`, `teacher`, `class`, `session`, `booking`, `report`, `metric`, `availability`, `studio`
+
+---
+
 ## Related docs
 
 - [glossary.md](./glossary.md)

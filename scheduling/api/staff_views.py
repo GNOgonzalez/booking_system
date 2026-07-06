@@ -1,0 +1,483 @@
+"""Staff API — manage teachers, schedules, classes, and studio settings."""
+
+from django.contrib.auth import get_user_model
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from scheduling.api.permissions import IsStaff
+from scheduling.api.serializers import (
+    AvailabilityBlockSerializer,
+    ClassOfferingOptionSerializer,
+    ClassOfferingSerializer,
+    MembershipPlanSerializer,
+    SessionSerializer,
+    SpecialAvailabilitySerializer,
+    StaffUserUpdateSerializer,
+    StudentOptionSerializer,
+    TeacherOptionSerializer,
+)
+from scheduling.models import (
+    AvailabilityBlock,
+    Booking,
+    ClassOffering,
+    MembershipPlan,
+    Profile,
+    Session,
+    SpecialAvailability,
+)
+from scheduling.services.availability import session_within_availability
+from scheduling.services.meetings import create_meeting_link
+from scheduling.services.reports import staff_reports
+from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
+from scheduling.services.staff import get_teacher, list_teachers
+from scheduling.services.users import get_student, list_students, update_user_account
+
+User = get_user_model()
+
+
+class StaffTeacherListView(generics.ListAPIView):
+    permission_classes = [IsStaff]
+    serializer_class = TeacherOptionSerializer
+
+    def get_queryset(self):
+        return list_teachers()
+
+
+class StaffOverallScheduleView(generics.ListAPIView):
+    """All sessions across teachers — studio-wide schedule for staff."""
+
+    permission_classes = [IsStaff]
+    serializer_class = SessionSerializer
+
+    def get_queryset(self):
+        return sessions_for_list(
+            Session.objects.filter(teacher__groups__name='teacher').order_by('start_time'),
+        )
+
+
+class StaffTeacherMixin:
+    permission_classes = [IsStaff]
+
+    def get_teacher(self):
+        teacher = get_teacher(self.kwargs['teacher_id'])
+        if teacher is None:
+            return None
+        return teacher
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        teacher = self.get_teacher()
+        if teacher is not None:
+            context['acting_teacher'] = teacher
+        return context
+
+    def teacher_or_404_response(self):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return None
+
+
+class StaffTeacherSessionListCreateView(StaffTeacherMixin, generics.ListCreateAPIView):
+    serializer_class = SessionSerializer
+
+    def get_queryset(self):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Session.objects.none()
+        qs = Session.objects.filter(teacher=teacher)
+        student_id = self.request.query_params.get('student')
+        if student_id:
+            qs = qs.filter(
+                bookings__student_id=student_id,
+                bookings__status='confirmed',
+            ).distinct()
+        return sessions_for_list(qs)
+
+    def list(self, request, *args, **kwargs):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        start = serializer.validated_data['start_time']
+        end = serializer.validated_data['end_time']
+        if not session_within_availability(teacher, start, end):
+            return Response(
+                {'detail': 'Session time is outside teacher availability.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        session = serializer.save(teacher=teacher, status='open')
+        session.meeting_url = create_meeting_link(session)
+        session.save(update_fields=['meeting_url'])
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class StaffTeacherSessionDetailView(StaffTeacherMixin, APIView):
+    def get_session(self, teacher, session_id):
+        return Session.objects.filter(pk=session_id, teacher=teacher).first()
+
+    def patch(self, request, teacher_id, session_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        session = self.get_session(teacher, session_id)
+        if session is None:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SessionSerializer(
+            session,
+            data=request.data,
+            partial=True,
+            context={'request': request, 'acting_teacher': teacher},
+        )
+        serializer.is_valid(raise_exception=True)
+        start = serializer.validated_data.get('start_time', session.start_time)
+        end = serializer.validated_data.get('end_time', session.end_time)
+        if 'start_time' in serializer.validated_data or 'end_time' in serializer.validated_data:
+            if not session_within_availability(teacher, start, end):
+                return Response(
+                    {'detail': 'Session time is outside teacher availability.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        ok, error = update_session(
+            session,
+            teacher,
+            class_offering=serializer.validated_data.get('class_offering'),
+            start_time=serializer.validated_data.get('start_time'),
+            end_time=serializer.validated_data.get('end_time'),
+            capacity=serializer.validated_data.get('capacity'),
+        )
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        session.refresh_from_db()
+        return Response(SessionSerializer(session).data)
+
+    def delete(self, request, teacher_id, session_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        session = self.get_session(teacher, session_id)
+        if session is None:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+        ok, error = cancel_session(session, teacher)
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(SessionSerializer(session).data)
+
+
+class StaffTeacherSessionStudentsView(StaffTeacherMixin, APIView):
+    def get(self, request, teacher_id, session_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        session = Session.objects.filter(pk=session_id, teacher=teacher).first()
+        if session is None:
+            return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bookings = Booking.objects.filter(
+            session=session,
+            status='confirmed',
+        ).select_related('student').order_by('student__username')
+
+        students = []
+        seen = set()
+        for booking in bookings:
+            user = booking.student
+            if user.id in seen:
+                continue
+            seen.add(user.id)
+            profile = Profile.objects.filter(user=user).first()
+            if profile and profile.display_name:
+                label = f"{profile.display_name} ({user.username})"
+            else:
+                label = user.username
+            students.append({'id': user.id, 'username': user.username, 'label': label})
+        return Response(students)
+
+
+class StaffTeacherClassListCreateView(StaffTeacherMixin, generics.ListCreateAPIView):
+    serializer_class = ClassOfferingSerializer
+
+    def get_queryset(self):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return ClassOffering.objects.none()
+        return ClassOffering.objects.filter(teacher=teacher).prefetch_related('topics').order_by('-is_active', 'subject')
+
+    def list(self, request, *args, **kwargs):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return super().create(request, *args, **kwargs)
+
+
+class StaffTeacherClassDetailView(StaffTeacherMixin, APIView):
+    def get_offering(self, teacher, pk):
+        return ClassOffering.objects.filter(pk=pk, teacher=teacher).first()
+
+    def patch(self, request, teacher_id, pk):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        offering = self.get_offering(teacher, pk)
+        if offering is None:
+            return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ClassOfferingSerializer(
+            offering,
+            data=request.data,
+            partial=True,
+            context={'request': request, 'acting_teacher': teacher},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, teacher_id, pk):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        offering = self.get_offering(teacher, pk)
+        if offering is None:
+            return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
+        offering.is_active = False
+        offering.save(update_fields=['is_active'])
+        return Response(ClassOfferingSerializer(offering).data)
+
+
+class StaffTeacherAvailabilityListCreateView(StaffTeacherMixin, generics.ListCreateAPIView):
+    serializer_class = AvailabilityBlockSerializer
+
+    def get_queryset(self):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return AvailabilityBlock.objects.none()
+        return AvailabilityBlock.objects.filter(teacher=teacher)
+
+    def list(self, request, *args, **kwargs):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return super().list(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(teacher=self.get_teacher())
+
+
+class StaffTeacherAvailabilityUpdateDeleteView(StaffTeacherMixin, generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = AvailabilityBlockSerializer
+    http_method_names = ['patch', 'put', 'delete', 'options', 'head']
+
+    def get_queryset(self):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return AvailabilityBlock.objects.none()
+        return AvailabilityBlock.objects.filter(teacher=teacher)
+
+
+class StaffTeacherSpecialAvailabilityListCreateView(StaffTeacherMixin, generics.ListCreateAPIView):
+    serializer_class = SpecialAvailabilitySerializer
+
+    def get_queryset(self):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return SpecialAvailability.objects.none()
+        return SpecialAvailability.objects.filter(teacher=teacher)
+
+    def list(self, request, *args, **kwargs):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return super().list(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(teacher=self.get_teacher())
+
+
+class StaffTeacherSpecialAvailabilityUpdateDeleteView(StaffTeacherMixin, generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = SpecialAvailabilitySerializer
+    http_method_names = ['patch', 'put', 'delete', 'options', 'head']
+
+    def get_queryset(self):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return SpecialAvailability.objects.none()
+        return SpecialAvailability.objects.filter(teacher=teacher)
+
+
+class StaffTeacherStudentListView(StaffTeacherMixin, generics.ListAPIView):
+    serializer_class = StudentOptionSerializer
+
+    def get_queryset(self):
+        if self.get_teacher() is None:
+            return User.objects.none()
+        return User.objects.filter(groups__name='student', is_active=True).order_by('username')
+
+    def list(self, request, *args, **kwargs):
+        if self.get_teacher() is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return super().list(request, *args, **kwargs)
+
+
+class StaffTeacherPermissionsView(StaffTeacherMixin, APIView):
+    """Grant or revoke teacher capabilities (schedule, classes, availability, reports)."""
+
+    def get(self, request, teacher_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        from scheduling.services.teacher_permissions import TEACHER_PERMISSION_DEFS, permissions_for_teacher
+
+        perms = permissions_for_teacher(teacher)
+        return Response([
+            {
+                'key': key,
+                'label': label,
+                'description': desc,
+                'is_enabled': perms[key],
+            }
+            for key, label, desc in TEACHER_PERMISSION_DEFS
+        ])
+
+    def patch(self, request, teacher_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        from scheduling.services.teacher_permissions import TEACHER_PERMISSION_DEFS, set_teacher_permissions
+
+        updates = request.data.get('permissions', request.data)
+        if not isinstance(updates, dict):
+            return Response({'detail': 'Expected a permissions object.'}, status=status.HTTP_400_BAD_REQUEST)
+        perms = set_teacher_permissions(teacher, updates)
+        return Response([
+            {
+                'key': key,
+                'label': label,
+                'description': desc,
+                'is_enabled': perms[key],
+            }
+            for key, label, desc in TEACHER_PERMISSION_DEFS
+        ])
+
+
+class StaffCreateClassView(APIView):
+    """Staff creates a teachable class for any teacher."""
+
+    permission_classes = [IsStaff]
+
+    def post(self, request):
+        teacher = get_teacher(request.data.get('teacher'))
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ClassOfferingSerializer(
+            data=request.data,
+            context={'request': request, 'acting_teacher': teacher},
+        )
+        serializer.is_valid(raise_exception=True)
+        offering = serializer.save(teacher=teacher)
+        return Response(ClassOfferingSerializer(offering).data, status=status.HTTP_201_CREATED)
+
+
+class StaffTeacherDetailView(StaffTeacherMixin, APIView):
+    def patch(self, request, teacher_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StaffUserUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ok, error = update_user_account(
+            teacher,
+            is_active=serializer.validated_data.get('is_active'),
+            display_name=serializer.validated_data.get('display_name'),
+        )
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(TeacherOptionSerializer(teacher).data)
+
+
+class StaffStudentListView(generics.ListAPIView):
+    permission_classes = [IsStaff]
+    serializer_class = StudentOptionSerializer
+
+    def get_queryset(self):
+        return list_students()
+
+
+class StaffStudentDetailView(APIView):
+    permission_classes = [IsStaff]
+
+    def patch(self, request, student_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StaffUserUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ok, error = update_user_account(
+            student,
+            is_active=serializer.validated_data.get('is_active'),
+            display_name=serializer.validated_data.get('display_name'),
+        )
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(StudentOptionSerializer(student).data)
+
+
+class StaffClassOfferingListView(generics.ListAPIView):
+    """All active catalog classes — for membership plan configuration."""
+
+    permission_classes = [IsStaff]
+    serializer_class = ClassOfferingOptionSerializer
+
+    def get_queryset(self):
+        return (
+            ClassOffering.objects.filter(is_active=True)
+            .select_related('teacher')
+            .prefetch_related('topics')
+            .order_by('teacher__username', 'subject', 'level', 'focus')
+        )
+
+
+class StaffMembershipPlanListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsStaff]
+    serializer_class = MembershipPlanSerializer
+
+    def get_queryset(self):
+        return MembershipPlan.objects.prefetch_related('allowed_classes', 'allowed_classes__teacher')
+
+
+class StaffMembershipPlanDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsStaff]
+    serializer_class = MembershipPlanSerializer
+
+    def get_queryset(self):
+        return MembershipPlan.objects.prefetch_related('allowed_classes', 'allowed_classes__teacher')
+
+    def destroy(self, request, *args, **kwargs):
+        plan = self.get_object()
+        if plan.memberships.exists():
+            return Response(
+                {'detail': 'Cannot delete a plan with memberships. Deactivate it instead.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class StaffReportsView(APIView):
+    """Studio-wide reports for staff — financials, bookings, teachers, students."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        try:
+            days = int(request.query_params.get('days', 30))
+        except (TypeError, ValueError):
+            days = 30
+        days = max(1, min(days, 365))
+        return Response(staff_reports(days=days))

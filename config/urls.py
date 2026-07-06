@@ -1,7 +1,10 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
 from scheduling import views
+from scheduling.api.google_views import google_oauth_callback
 
 urlpatterns = [
     path('', views.home, name='home'),
@@ -9,6 +12,7 @@ urlpatterns = [
     path('accounts/', include('django.contrib.auth.urls')),
     path('api/', include('scheduling.api.urls')),
     path('api/progress/', include('progress.api_urls')),
+    path('integrations/google/callback/', google_oauth_callback, name='google_oauth_callback'),
     path('teacher/dashboard/', views.teacher_dashboard, name='teacher_dashboard'),
     path('student/dashboard/', views.student_dashboard, name='student_dashboard'),
     path('staff/dashboard/', views.staff_dashboard, name='staff_dashboard'),
@@ -17,8 +21,8 @@ urlpatterns = [
     path('teacher/availability/', views.teacher_availability_list, name='teacher_availability_list'),
     path('teacher/availability/new/', views.teacher_availability_create, name='teacher_availability_create'),
     path('teacher/availability/<int:block_id>/delete/', views.teacher_availability_delete, name='teacher_availability_delete'),
-    path('teacher/class-types/', views.teacher_class_type_list, name='teacher_class_type_list'),
-    path('teacher/class-types/new/', views.teacher_class_type_create, name='teacher_class_type_create'),
+    path('teacher/special-availability/new/', views.teacher_special_availability_create, name='teacher_special_availability_create'),
+    path('teacher/special-availability/<int:block_id>/delete/', views.teacher_special_availability_delete, name='teacher_special_availability_delete'),
     path('student/sessions/<int:session_id>/book/', views.student_book_session, name='student_book_session'),
     path('student/sessions/', views.student_session_list, name='student_session_list'),
     path('student/bookings/', views.student_booking_list, name='student_booking_list'),
@@ -31,3 +35,6 @@ urlpatterns = [
     path('curriculum/', views.curriculum_list, name='curriculum_list'),
     path('progress/', include('progress.urls')),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

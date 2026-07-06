@@ -33,6 +33,7 @@ npm-debug.log*
 
 # Deploy / build
 staticfiles/
+media/
 
 # OS / editor
 .DS_Store
