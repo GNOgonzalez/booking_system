@@ -2,8 +2,8 @@
 
 from datetime import timedelta
 
-from django.utils.dateparse import parse_datetime
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from scheduling.services.availability import times_overlap
 from scheduling.services.class_requests import availability_snapshot

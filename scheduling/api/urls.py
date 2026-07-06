@@ -1,7 +1,15 @@
 from django.urls import path
 
 from progress.api.history import TeacherSessionHistoryPrivacyView, TeacherStudentHistoryView
-from scheduling.api import blog_views, branding_views, class_catalog_views, class_request_views, google_views, staff_views, views
+from scheduling.api import (
+    blog_views,
+    branding_views,
+    class_catalog_views,
+    class_request_views,
+    google_views,
+    staff_views,
+    views,
+)
 from scheduling.api.auth_views import (
     StudentRegisterView,
     ThrottledTokenObtainPairView,

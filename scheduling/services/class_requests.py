@@ -1,6 +1,6 @@
 """Student class requests during teacher availability — hold tickets until approved."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.db.models import Min
@@ -8,7 +8,6 @@ from django.utils import timezone
 
 from scheduling.models import ClassOffering, ClassRequest, Session
 from scheduling.services.availability import session_within_availability, times_overlap
-from scheduling.services.timezones import combine_in_teacher_tz
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.membership import (
     _membership_allows_class,
@@ -19,6 +18,7 @@ from scheduling.services.membership import (
 from scheduling.services.notifications import notify_booking_created
 from scheduling.services.sessions import class_topic_belongs_to_offering, session_display_title
 from scheduling.services.tickets import hold_tickets, release_tickets
+from scheduling.services.timezones import combine_in_teacher_tz
 
 User = get_user_model()
 

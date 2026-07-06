@@ -18,8 +18,8 @@ from scheduling.models import (
     Message,
     Session,
 )
-from scheduling.services.glossary import ensure_default_glossary
 from scheduling.services.class_catalog import ensure_default_catalog
+from scheduling.services.glossary import ensure_default_glossary
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.sessions import session_display_title
 from scheduling.services.teacher_permissions import ensure_default_permissions

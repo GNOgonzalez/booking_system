@@ -6,8 +6,8 @@ from scheduling.services.membership import (
     membership_for_booking,
 )
 from scheduling.services.notifications import (
-    send_booking_cancellation,
     notify_booking_created,
+    send_booking_cancellation,
 )
 from scheduling.services.tickets import (
     refund_booking_tickets,
