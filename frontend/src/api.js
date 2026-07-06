@@ -48,42 +48,68 @@ async function refreshAccessToken() {
   return data.access
 }
 
-export async function apiFetch(path, options = {}) {
-  const { access } = getTokens()
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(options.headers || {}),
-  }
-  if (access) {
-    headers.Authorization = `Bearer ${access}`
-  }
+function networkError() {
+  return new Error(
+    `Cannot reach the API at ${API_BASE}. Is Django running? (python manage.py runserver)`,
+  )
+}
 
+/** Read error body once — Response bodies cannot be consumed twice. */
+async function parseResponseError(res) {
+  const text = await res.text()
+  let message = text || `Request failed: ${res.status}`
+  try {
+    const json = JSON.parse(text)
+    if (json.detail) message = json.detail
+    else if (json.message) message = json.message
+  } catch {
+    // keep raw text
+  }
+  return message
+}
+
+/**
+ * Fetch with a single 401 retry after refreshing the access token.
+ * buildInit(accessToken) must return a fresh RequestInit each call so FormData
+ * bodies are not reused after consumption.
+ */
+async function fetchWithAuthRetry(path, buildInit) {
   let res
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+    res = await fetch(`${API_BASE}${path}`, buildInit())
   } catch {
-    throw new Error(`Cannot reach the API at ${API_BASE}. Is Django running? (python manage.py runserver)`)
+    throw networkError()
   }
 
   if (res.status === 401 && getTokens().refresh) {
     const newAccess = await refreshAccessToken()
     if (newAccess) {
-      headers.Authorization = `Bearer ${newAccess}`
-      res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+      try {
+        res = await fetch(`${API_BASE}${path}`, buildInit(newAccess))
+      } catch {
+        throw networkError()
+      }
     }
   }
 
-  if (!res.ok) {
-    const text = await res.text()
-    let message = text || `Request failed: ${res.status}`
-    try {
-      const json = JSON.parse(text)
-      if (json.detail) message = json.detail
-      else if (json.message) message = json.message
-    } catch {
-      // keep raw text
+  return res
+}
+
+export async function apiFetch(path, options = {}) {
+  const buildInit = (accessOverride) => {
+    const { access } = getTokens()
+    const token = accessOverride ?? access
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
     }
-    throw new Error(message)
+    if (token) headers.Authorization = `Bearer ${token}`
+    return { ...options, headers }
+  }
+
+  const res = await fetchWithAuthRetry(path, buildInit)
+  if (!res.ok) {
+    throw new Error(await parseResponseError(res))
   }
 
   if (res.status === 204) return null
@@ -92,47 +118,31 @@ export async function apiFetch(path, options = {}) {
 
 /** Multipart upload — do not set Content-Type; browser adds the boundary. */
 export async function apiUpload(path, formData, options = {}) {
-  const { access } = getTokens()
-  const headers = { ...(options.headers || {}) }
-  if (access) {
-    headers.Authorization = `Bearer ${access}`
-  }
+  // Snapshot entries before the first fetch — FormData streams are consumed once.
+  const formEntries = [...formData.entries()]
 
-  let res
-  try {
-    res = await fetch(`${API_BASE}${path}`, {
+  const buildInit = (accessOverride) => {
+    const { access } = getTokens()
+    const token = accessOverride ?? access
+    const headers = { ...(options.headers || {}) }
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const body = new FormData()
+    for (const [key, value] of formEntries) {
+      body.append(key, value)
+    }
+
+    return {
       method: options.method || 'POST',
       ...options,
       headers,
-      body: formData,
-    })
-  } catch {
-    throw new Error(`Cannot reach the API at ${API_BASE}. Is Django running?`)
-  }
-
-  if (res.status === 401 && getTokens().refresh) {
-    const newAccess = await refreshAccessToken()
-    if (newAccess) {
-      headers.Authorization = `Bearer ${newAccess}`
-      res = await fetch(`${API_BASE}${path}`, {
-        method: options.method || 'POST',
-        ...options,
-        headers,
-        body: formData,
-      })
+      body,
     }
   }
 
+  const res = await fetchWithAuthRetry(path, buildInit)
   if (!res.ok) {
-    const text = await res.text()
-    let message = text || `Request failed: ${res.status}`
-    try {
-      const json = JSON.parse(text)
-      if (json.detail) message = json.detail
-    } catch {
-      // keep raw text
-    }
-    throw new Error(message)
+    throw new Error(await parseResponseError(res))
   }
 
   if (res.status === 204) return null
@@ -141,13 +151,17 @@ export async function apiUpload(path, formData, options = {}) {
 
 /** Authenticated file download (homework attachments). */
 export async function apiDownload(path, filename) {
-  const { access } = getTokens()
-  const headers = {}
-  if (access) headers.Authorization = `Bearer ${access}`
+  const buildInit = (accessOverride) => {
+    const { access } = getTokens()
+    const token = accessOverride ?? access
+    const headers = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    return { headers }
+  }
 
-  const res = await fetch(`${API_BASE}${path}`, { headers })
+  const res = await fetchWithAuthRetry(path, buildInit)
   if (!res.ok) {
-    throw new Error('Download failed.')
+    throw new Error(await parseResponseError(res))
   }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
