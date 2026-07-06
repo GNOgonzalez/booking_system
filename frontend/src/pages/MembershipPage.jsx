@@ -23,8 +23,18 @@ function ticketPackMatchesMembership(ticketPlan, membership) {
   const plan = membership.plan
   if (!plan || plan.plan_type === 'ticket_pack') return false
   if (ticketPlan.includes_all_classes || plan.includes_all_classes) return true
+  if (ticketPlan.subject && plan.subject) return ticketPlan.subject === plan.subject
   const membershipClassIds = new Set((plan.allowed_classes || []).map((c) => c.id))
   return (ticketPlan.allowed_classes || []).some((c) => membershipClassIds.has(c.id))
+}
+
+const CHECKOUT_POLL_INTERVAL_MS = 2000
+const CHECKOUT_POLL_ATTEMPTS = 8
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }
 
 export default function MembershipPage() {
@@ -38,40 +48,111 @@ export default function MembershipPage() {
   const [ticketMembershipId, setTicketMembershipId] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [activating, setActivating] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const stripeMode = paymentConfig.mode === 'stripe' && paymentConfig.checkout_available
 
-  const load = () => {
-    Promise.all([
-      apiFetch('/api/membership/'),
-      apiFetch('/api/membership/plans/'),
-      apiFetch('/api/membership/payment-config/'),
-    ])
-      .then(([membershipResponse, planRows, config]) => {
-        setMembershipData(membershipResponse)
-        setPlans(planRows)
-        setPaymentConfig(config)
-        const subscriptions = planRows.filter((p) => p.plan_type !== 'ticket_pack')
-        const packs = planRows.filter((p) => p.plan_type === 'ticket_pack')
-        setPlanId((current) => current || (subscriptions[0] ? String(subscriptions[0].id) : ''))
-        setTicketPackId((current) => current || (packs[0] ? String(packs[0].id) : ''))
-      })
-      .catch((err) => setError(err.message))
-  }
+  const load = () => Promise.all([
+    apiFetch('/api/membership/'),
+    apiFetch('/api/membership/plans/'),
+    apiFetch('/api/membership/payment-config/'),
+  ])
+    .then(([membershipResponse, planRows, config]) => {
+      setMembershipData(membershipResponse)
+      setPlans(planRows)
+      setPaymentConfig(config)
+      const subscriptions = planRows.filter((p) => p.plan_type !== 'ticket_pack')
+      const packs = planRows.filter((p) => p.plan_type === 'ticket_pack')
+      setPlanId((current) => current || (subscriptions[0] ? String(subscriptions[0].id) : ''))
+      setTicketPackId((current) => current || (packs[0] ? String(packs[0].id) : ''))
+      return membershipResponse
+    })
+    .catch((err) => {
+      setError(err.message)
+      return null
+    })
 
-  useEffect(load, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   useEffect(() => {
     const checkout = searchParams.get('checkout')
-    if (checkout === 'success') {
-      setMessage('Payment received — your membership updates once Stripe confirms (usually within seconds).')
-      load()
-      setSearchParams({}, { replace: true })
-    } else if (checkout === 'cancelled') {
+    const paymentId = searchParams.get('payment_id')
+    if (checkout !== 'success' && checkout !== 'cancelled') return undefined
+
+    setSearchParams({}, { replace: true })
+
+    if (checkout === 'cancelled') {
       setMessage('')
       setError('Checkout cancelled. No charge was made.')
-      setSearchParams({}, { replace: true })
+      return undefined
+    }
+
+    let cancelled = false
+
+    const pollAfterCheckout = async () => {
+      setActivating(true)
+      setError('')
+      setMessage('Activating your membership…')
+
+      for (let attempt = 0; attempt < CHECKOUT_POLL_ATTEMPTS; attempt += 1) {
+        if (cancelled) return
+
+        try {
+          if (paymentId) {
+            const status = await apiFetch(`/api/membership/payments/${paymentId}/`)
+            if (status.status === 'completed') {
+              setActivating(false)
+              setMessage('Membership active! Your tickets are ready to use.')
+              await load()
+              return
+            }
+            if (status.status === 'failed') {
+              setActivating(false)
+              setMessage('')
+              setError('Payment could not be completed. Please try again or contact support.')
+              await load()
+              return
+            }
+          } else {
+            const membershipResponse = await apiFetch('/api/membership/')
+            if (membershipResponse?.active) {
+              setActivating(false)
+              setMessage('Membership active! Your tickets are ready to use.')
+              await load()
+              return
+            }
+          }
+        } catch (err) {
+          if (attempt === CHECKOUT_POLL_ATTEMPTS - 1) {
+            setActivating(false)
+            setMessage('')
+            setError(err.message)
+            return
+          }
+        }
+
+        if (attempt < CHECKOUT_POLL_ATTEMPTS - 1) {
+          await sleep(CHECKOUT_POLL_INTERVAL_MS)
+        }
+      }
+
+      if (cancelled) return
+      setActivating(false)
+      setMessage('')
+      setError(
+        'Payment received, but activation is taking longer than usual. '
+        + 'Try refreshing in a moment or contact support if it does not appear.',
+      )
+      await load()
+    }
+
+    pollAfterCheckout()
+
+    return () => {
+      cancelled = true
     }
   }, [searchParams, setSearchParams])
 
@@ -110,9 +191,14 @@ export default function MembershipPage() {
     try {
       const body = { plan_id, months }
       if (membership_id != null) body.membership_id = membership_id
+      const origin = window.location.origin
       const result = await apiFetch('/api/membership/checkout/', {
         method: 'POST',
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...body,
+          success_url: `${origin}/membership?checkout=success`,
+          cancel_url: `${origin}/membership?checkout=cancelled`,
+        }),
       })
       window.location.href = result.checkout_url
     } catch (err) {
@@ -212,7 +298,8 @@ export default function MembershipPage() {
       <p className="page-intro">
         Subscribe by subject, or buy individual tickets to top up an existing membership.
       </p>
-      {message && <div className="success">{message}</div>}
+      {activating && <div className="success">Activating your membership…</div>}
+      {message && !activating && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
 
       {stripeMode && (
@@ -238,6 +325,8 @@ export default function MembershipPage() {
               </p>
               {item.plan?.includes_all_classes ? (
                 <p className="card-meta">Includes all {labels('class').toLowerCase()}.</p>
+              ) : item.plan?.subject ? (
+                <p className="card-meta">Includes all {item.plan.subject} {labels('class').toLowerCase()}.</p>
               ) : item.plan?.allowed_classes?.length ? (
                 <ul className="membership-class-list">
                   {item.plan.allowed_classes.map((cls) => (

@@ -22,6 +22,8 @@ from scheduling.services.llm import ai_available_for_user
 from scheduling.services.sessions import session_display_title
 from scheduling.services.teacher_permissions import permissions_for_teacher
 
+User = get_user_model()
+
 
 class SessionSerializer(serializers.ModelSerializer):
     teacher_name = serializers.CharField(source='teacher.username', read_only=True)
@@ -40,6 +42,7 @@ class SessionSerializer(serializers.ModelSerializer):
     )
     confirmed_count = serializers.SerializerMethodField()
     ticket_cost = serializers.SerializerMethodField()
+    student_booked = serializers.SerializerMethodField()
 
     class Meta:
         model = Session
@@ -64,6 +67,7 @@ class SessionSerializer(serializers.ModelSerializer):
             'meeting_url',
             'confirmed_count',
             'ticket_cost',
+            'student_booked',
         ]
         read_only_fields = ['status', 'meeting_url', 'title', 'teacher', 'meeting_provider_display']
 
@@ -82,6 +86,12 @@ class SessionSerializer(serializers.ModelSerializer):
         if obj.class_offering_id:
             return obj.class_offering.ticket_cost
         return 1
+
+    def get_student_booked(self, obj):
+        annotated = getattr(obj, 'student_booked', None)
+        if annotated is not None:
+            return bool(annotated)
+        return False
 
     def _catalog_teacher(self):
         return self.context.get('acting_teacher') or self.context['request'].user
@@ -174,10 +184,11 @@ class BookingSerializer(serializers.ModelSerializer):
 
 class ClassRequestSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.username', read_only=True)
-    teacher_name = serializers.CharField(source='teacher.username', read_only=True)
-    class_offering_label = serializers.CharField(source='class_offering.display_name', read_only=True)
+    teacher_name = serializers.SerializerMethodField()
+    class_offering_label = serializers.SerializerMethodField()
     class_topic_title = serializers.CharField(source='class_topic.title', read_only=True, default=None)
     session_id = serializers.IntegerField(source='session.id', read_only=True, default=None)
+    class_profile_label = serializers.SerializerMethodField()
 
     class Meta:
         model = ClassRequest
@@ -187,6 +198,11 @@ class ClassRequestSerializer(serializers.ModelSerializer):
             'student_name',
             'teacher',
             'teacher_name',
+            'open_to_any_teacher',
+            'subject',
+            'level',
+            'focus',
+            'class_profile_label',
             'class_offering',
             'class_offering_label',
             'class_topic',
@@ -207,14 +223,42 @@ class ClassRequestSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
 
+    def get_teacher_name(self, obj):
+        if obj.open_to_any_teacher and obj.teacher_id is None:
+            return 'Any available teacher'
+        if obj.teacher_id:
+            return obj.teacher.username
+        return ''
+
+    def get_class_profile_label(self, obj):
+        return obj.class_profile_label
+
+    def get_class_offering_label(self, obj):
+        if obj.class_offering_id:
+            return obj.class_offering.display_name
+        return obj.class_profile_label
+
 
 class ClassRequestCreateSerializer(serializers.Serializer):
-    teacher = serializers.IntegerField()
-    class_offering = serializers.IntegerField()
+    teacher = serializers.IntegerField(required=False, allow_null=True)
+    open_to_any_teacher = serializers.BooleanField(required=False, default=False)
+    class_offering = serializers.IntegerField(required=False, allow_null=True)
     class_topic = serializers.IntegerField(required=False, allow_null=True)
+    subject = serializers.CharField(required=False, allow_blank=True)
+    level = serializers.CharField(required=False, allow_blank=True)
+    focus = serializers.CharField(required=False, allow_blank=True)
     start_time = serializers.DateTimeField()
     end_time = serializers.DateTimeField()
     tickets_requested = serializers.IntegerField(min_value=1)
+
+
+class OpenClassProfileSerializer(serializers.Serializer):
+    subject = serializers.CharField()
+    level = serializers.CharField()
+    focus = serializers.CharField()
+    label = serializers.CharField()
+    min_ticket_cost = serializers.IntegerField()
+    teacher_count = serializers.IntegerField()
 
 
 class ClassRequestUpdateSerializer(serializers.Serializer):
@@ -424,6 +468,7 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
             'billing_period_days',
             'ticket_allowance',
             'is_active',
+            'subject',
             'includes_all_classes',
             'allowed_class_ids',
             'allowed_classes',
@@ -453,6 +498,7 @@ class MembershipPlanPublicSerializer(serializers.ModelSerializer):
             'price_display',
             'billing_period_days',
             'ticket_allowance',
+            'subject',
             'includes_all_classes',
             'allowed_classes',
         ]
@@ -562,6 +608,44 @@ class MeUpdateSerializer(serializers.Serializer):
         if 'theme' in data:
             profile.theme = data['theme']
         profile.save()
+        return user
+
+
+class StudentRegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    display_name = serializers.CharField(required=False, allow_blank=True, max_length=50)
+
+    def validate_username(self, value):
+        username = value.strip()
+        if not username:
+            raise serializers.ValidationError('Username is required.')
+        if User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError('That username is already taken.')
+        return username
+
+    def validate_email(self, value):
+        email = value.strip()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError('That email is already registered.')
+        return email
+
+    def validate_password(self, value):
+        validate_password(value)
+        return value
+
+    def save(self):
+        from scheduling.services.registration import register_student
+
+        user, error = register_student(
+            username=self.validated_data['username'],
+            email=self.validated_data['email'],
+            password=self.validated_data['password'],
+            display_name=self.validated_data.get('display_name', ''),
+        )
+        if error:
+            raise serializers.ValidationError(error)
         return user
 
 

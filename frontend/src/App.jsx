@@ -1,7 +1,8 @@
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { Suspense, lazy, useEffect, useState } from 'react'
-import { clearTokens, getMe, getTokens, login } from './api.js'
+import { clearTokens, getTokens, loadMeProfile, login, register } from './api.js'
 import LoginPage from './pages/LoginPage.jsx'
+import RegisterPage from './pages/RegisterPage.jsx'
 import BlogFeed from './components/BlogFeed.jsx'
 import OnboardingChecklist from './components/OnboardingChecklist.jsx'
 import { BrandingProvider, useBranding } from './hooks/useBranding.jsx'
@@ -26,6 +27,7 @@ const StaffDashboardPage = lazy(() => import('./pages/StaffDashboardPage.jsx'))
 const StaffMetricsPage = lazy(() => import('./pages/StaffMetricsPage.jsx'))
 const StaffSchedulePage = lazy(() => import('./pages/StaffSchedulePage.jsx'))
 const StaffTeacherLayout = lazy(() => import('./pages/StaffTeacherLayout.jsx'))
+const StaffClassCatalogPage = lazy(() => import('./pages/StaffClassCatalogPage.jsx'))
 const StaffCreateClassPage = lazy(() => import('./pages/StaffCreateClassPage.jsx'))
 const StaffStudentsPage = lazy(() => import('./pages/StaffStudentsPage.jsx'))
 const StaffTeacherPermissionsPage = lazy(() => import('./pages/StaffTeacherPermissionsPage.jsx'))
@@ -43,7 +45,24 @@ function PageLoader() {
   return <p className="page-intro">Loading…</p>
 }
 
-function Sidebar({ me, onLogout }) {
+function MobileTopbar({ onOpen }) {
+  const { branding } = useBranding()
+  return (
+    <header className="mobile-topbar">
+      <button type="button" className="mobile-nav-toggle" aria-label="Open menu" onClick={onOpen}>
+        <span className="mobile-nav-toggle-icon" aria-hidden="true" />
+      </button>
+      <div className="mobile-topbar-brand">
+        {branding.logo_url && (
+          <img src={branding.logo_url} alt="" className="branding-logo branding-logo--sidebar" />
+        )}
+        <span>{branding.display_name}</span>
+      </div>
+    </header>
+  )
+}
+
+function Sidebar({ me, onLogout, onClose }) {
   const { label, labels } = useGlossary()
   const { branding } = useBranding()
   const roles = me?.roles || []
@@ -57,6 +76,9 @@ function Sidebar({ me, onLogout }) {
 
   return (
     <aside className="sidebar">
+      <button type="button" className="sidebar-close" aria-label="Close menu" onClick={onClose}>
+        ×
+      </button>
       <div className="brand">
         {branding.logo_url && (
           <img src={branding.logo_url} alt="" className="branding-logo branding-logo--sidebar" />
@@ -87,6 +109,7 @@ function Sidebar({ me, onLogout }) {
           <NavLink to="/staff" end className="nav-link">Dashboard</NavLink>
           <NavLink to="/staff/schedule" className="nav-link">{label('studio')} schedule</NavLink>
           <NavLink to="/staff/classes/new" className="nav-link">Create {label('class').toLowerCase()}</NavLink>
+          <NavLink to="/staff/class-catalog" className="nav-link">Class roadmap</NavLink>
           <NavLink to="/staff/students" className="nav-link">{labels('student')}</NavLink>
           <NavLink to="/staff/memberships" className="nav-link">Memberships</NavLink>
           <NavLink to="/staff/reports" className="nav-link">Reports</NavLink>
@@ -182,12 +205,34 @@ function HomePage({ me }) {
 
 function AppRoutes() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [navOpen, setNavOpen] = useState(false)
   const [authed, setAuthed] = useState(Boolean(getTokens().access))
   const [me, setMe] = useState(null)
 
+  useEffect(() => {
+    setNavOpen(false)
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!navOpen) return undefined
+    const onKey = (event) => {
+      if (event.key === 'Escape') setNavOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navOpen])
+
+  useEffect(() => {
+    document.body.style.overflow = navOpen ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [navOpen])
+
   const loadMe = () => {
     if (getTokens().access) {
-      getMe().then(setMe).catch(() => setMe(null))
+      loadMeProfile().then(setMe).catch(() => setMe(null))
     }
   }
 
@@ -216,6 +261,12 @@ function AppRoutes() {
     navigate('/')
   }
 
+  const handleRegister = async (payload) => {
+    await register(payload)
+    setAuthed(true)
+    navigate('/')
+  }
+
   const handleLogout = () => {
     clearTokens()
     setMe(null)
@@ -227,6 +278,7 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+        <Route path="/register" element={<RegisterPage onRegister={handleRegister} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     )
@@ -234,8 +286,16 @@ function AppRoutes() {
 
   return (
     <GlossaryProvider>
-      <div className="app-shell">
-        <Sidebar me={me} onLogout={handleLogout} />
+      <div className={`app-shell${navOpen ? ' nav-open' : ''}`}>
+        <MobileTopbar onOpen={() => setNavOpen(true)} />
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close menu"
+          tabIndex={navOpen ? 0 : -1}
+          onClick={() => setNavOpen(false)}
+        />
+        <Sidebar me={me} onLogout={handleLogout} onClose={() => setNavOpen(false)} />
         <main className="main">
           <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -257,6 +317,7 @@ function AppRoutes() {
               <Route path="/staff" element={<StaffDashboardPage />} />
               <Route path="/staff/schedule" element={<StaffSchedulePage />} />
               <Route path="/staff/classes/new" element={<StaffCreateClassPage />} />
+              <Route path="/staff/class-catalog" element={<StaffClassCatalogPage />} />
               <Route path="/staff/students" element={<StaffStudentsPage />} />
               <Route path="/staff/memberships" element={<StaffMembershipPlansPage />} />
               <Route path="/staff/reports" element={<StaffReportsPage />} />

@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from scheduling.models import Booking, Session
-from scheduling.services.booking import cancel_booking, create_booking
+from scheduling.services.booking import booking_block_reason, cancel_booking, create_booking
 from scheduling.services.calendar import session_to_ics
 from scheduling.services.membership import active_membership_for
 from scheduling.services.payments import get_available_plans, purchase_membership
@@ -21,10 +21,24 @@ def student_book_session(request, session_id):
         return denied
 
     session = get_object_or_404(Session, pk=session_id)
-    if create_booking(request.user, session):
-        messages.success(request, f'Booked "{session.title}".')
+    result = create_booking(request.user, session)
+    if result:
+        booking, notifications = result
+        if notifications['student_email_sent'] and request.user.email:
+            messages.success(
+                request,
+                f'Booked "{session.title}". Confirmation email sent to {request.user.email}.',
+            )
+        elif request.user.email:
+            messages.success(request, f'Booked "{session.title}".')
+        else:
+            messages.success(
+                request,
+                f'Booked "{session.title}". Add an email in Profile to receive confirmations.',
+            )
         return redirect('student_booking_list')
-    messages.error(request, 'Could not book that session.')
+    reason = booking_block_reason(request.user, session) or 'Could not book that session.'
+    messages.error(request, reason)
     return redirect('student_session_list')
 
 

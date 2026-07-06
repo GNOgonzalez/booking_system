@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -17,7 +18,7 @@ from scheduling.models import (
     Session,
 )
 from scheduling.services.blog import create_blog_post
-from scheduling.services.booking import cancel_booking, create_booking
+from scheduling.services.booking import booking_block_reason, cancel_booking, create_booking
 from scheduling.services.calendar import session_to_ics
 from scheduling.services.class_requests import approve_class_request, create_class_request, deny_class_request
 from scheduling.services.payments import fulfill_payment, purchase_membership
@@ -62,6 +63,23 @@ class BookingServiceTests(TestCase):
         self.session.refresh_from_db()
         self.assertEqual(booking.status, 'cancelled')
         self.assertEqual(self.session.status, 'cancelled')
+
+    @patch('scheduling.services.notifications.send_mail')
+    def test_booking_emails_student_and_teacher(self, mock_send_mail):
+        self.student.email = 'student@example.com'
+        self.student.save(update_fields=['email'])
+        self.teacher.email = 'teacher@example.com'
+        self.teacher.save(update_fields=['email'])
+        self.assertTrue(create_booking(self.student, self.session))
+        self.assertEqual(mock_send_mail.call_count, 2)
+        recipients = [call.args[3][0] for call in mock_send_mail.call_args_list]
+        self.assertIn('student@example.com', recipients)
+        self.assertIn('teacher@example.com', recipients)
+        teacher_call = next(
+            call for call in mock_send_mail.call_args_list if call.args[3][0] == 'teacher@example.com'
+        )
+        self.assertIn('New booking:', teacher_call.args[0])
+        self.assertIn('s1 booked', teacher_call.args[1])
 
     def test_booking_requires_membership(self):
         Membership.objects.filter(user=self.student).update(is_active=False)
@@ -132,6 +150,29 @@ class BookingServiceTests(TestCase):
         self.session.save()
         self.assertTrue(create_booking(self.student, self.session))
 
+    def test_subject_membership_covers_any_teacher_class(self):
+        other_teacher = User.objects.create_user('t2', password='pass')
+        other_teacher.groups.add(Group.objects.get(name='teacher'))
+        offering = self._create_offering(
+            subject='Japanese',
+            level='Beginner',
+            focus='Speaking',
+            topics='Greetings',
+        )
+        offering.teacher = other_teacher
+        offering.save()
+        japanese_plan = MembershipPlan.objects.create(
+            name='Japanese',
+            subject='Japanese',
+            price_cents=2000,
+            ticket_allowance=10,
+        )
+        self.membership.plan = japanese_plan
+        self.membership.save()
+        self.session.class_offering = offering
+        self.session.save()
+        self.assertTrue(create_booking(self.student, self.session))
+
     def test_full_session_blocks_booking(self):
         self.session.capacity = 1
         self.session.save()
@@ -140,6 +181,17 @@ class BookingServiceTests(TestCase):
         Membership.objects.create(user=other, plan=self.plan, is_active=True, tickets_remaining=10)
         self.assertTrue(create_booking(other, self.session))
         self.assertFalse(create_booking(self.student, self.session))
+        self.assertEqual(
+            booking_block_reason(self.student, self.session),
+            'This session is full.',
+        )
+
+    def test_duplicate_booking_reason(self):
+        self.assertTrue(create_booking(self.student, self.session))
+        self.assertEqual(
+            booking_block_reason(self.student, self.session),
+            'You already have a booking for this session.',
+        )
 
     def test_ics_generation(self):
         ics = session_to_ics(self.session)
@@ -147,7 +199,12 @@ class BookingServiceTests(TestCase):
         self.assertIn('SUMMARY:Test', ics)
 
 
+@override_settings(
+    STRIPE={'SECRET_KEY': '', 'PUBLISHABLE_KEY': '', 'WEBHOOK_SECRET': '', 'ENABLED': False},
+)
 class PaymentServiceTests(TestCase):
+    """Mock-payment flows — Stripe explicitly disabled so local .env keys don't leak in."""
+
     def setUp(self):
         Group.objects.create(name='student')
         self.student = User.objects.create_user('s1', password='pass')
@@ -296,19 +353,31 @@ class StripePaymentTests(TestCase):
         self.assertIsNone(membership)
         self.assertIn('checkout', error.lower())
 
-    @override_settings(DEBUG=False, ALLOW_MOCK_PAYMENTS=False)
+    @override_settings(
+        DEBUG=False,
+        ALLOW_MOCK_PAYMENTS=False,
+        STRIPE={'SECRET_KEY': '', 'PUBLISHABLE_KEY': '', 'WEBHOOK_SECRET': '', 'ENABLED': False},
+    )
     def test_mock_purchase_blocked_in_production_without_stripe(self):
         membership, error = purchase_membership(self.student, self.plan.id)
         self.assertIsNone(membership)
         self.assertIn('mock payments are disabled', error.lower())
 
-    @override_settings(DEBUG=False, ALLOW_MOCK_PAYMENTS=True)
+    @override_settings(
+        DEBUG=False,
+        ALLOW_MOCK_PAYMENTS=True,
+        STRIPE={'SECRET_KEY': '', 'PUBLISHABLE_KEY': '', 'WEBHOOK_SECRET': '', 'ENABLED': False},
+    )
     def test_mock_purchase_allowed_when_explicitly_enabled_in_production(self):
         membership, error = purchase_membership(self.student, self.plan.id)
         self.assertIsNone(error)
         self.assertTrue(membership.is_active)
 
-    @override_settings(DEBUG=False, ALLOW_MOCK_PAYMENTS=False)
+    @override_settings(
+        DEBUG=False,
+        ALLOW_MOCK_PAYMENTS=False,
+        STRIPE={'SECRET_KEY': '', 'PUBLISHABLE_KEY': '', 'WEBHOOK_SECRET': '', 'ENABLED': False},
+    )
     def test_api_membership_post_blocked_in_production(self):
         res = self.client.post(
             '/api/auth/token/',
@@ -366,6 +435,109 @@ class StripePaymentTests(TestCase):
         payment.refresh_from_db()
         self.assertEqual(payment.status, Payment.STATUS_COMPLETED)
         self.assertTrue(Membership.objects.filter(user=self.student, is_active=True).exists())
+
+    def test_payment_status_for_owner(self):
+        payment = Payment.objects.create(
+            user=self.student,
+            plan=self.plan,
+            amount_cents=2000,
+            quantity=1,
+            provider=Payment.PROVIDER_STRIPE,
+            status=Payment.STATUS_PENDING,
+        )
+        token_res = self.client.post(
+            '/api/auth/token/',
+            {'username': 's1', 'password': 'pass'},
+            content_type='application/json',
+        )
+        token = token_res.json()['access']
+        res = self.client.get(
+            f'/api/membership/payments/{payment.id}/',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['status'], Payment.STATUS_PENDING)
+        self.assertEqual(body['plan_name'], self.plan.name)
+
+    def test_payment_status_hidden_from_other_users(self):
+        other = User.objects.create_user('other', password='pass')
+        other.groups.add(Group.objects.get(name='student'))
+        payment = Payment.objects.create(
+            user=self.student,
+            plan=self.plan,
+            amount_cents=2000,
+            quantity=1,
+            provider=Payment.PROVIDER_STRIPE,
+            status=Payment.STATUS_PENDING,
+        )
+        token_res = self.client.post(
+            '/api/auth/token/',
+            {'username': 'other', 'password': 'pass'},
+            content_type='application/json',
+        )
+        token = token_res.json()['access']
+        res = self.client.get(
+            f'/api/membership/payments/{payment.id}/',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 404)
+
+
+class StripeWebhookSignatureTests(TestCase):
+    @override_settings(
+        STRIPE={
+            'SECRET_KEY': 'sk_test',
+            'PUBLISHABLE_KEY': 'pk_test',
+            'WEBHOOK_SECRET': 'whsec_test_secret',
+            'ENABLED': True,
+        },
+    )
+    def test_verify_webhook_signature_accepts_valid_signature(self):
+        import hashlib
+        import hmac
+        import time
+
+        from integrations.stripe.client import verify_webhook_signature
+
+        secret = 'whsec_test_secret'
+        payload = b'{"id":"evt_test"}'
+        timestamp = str(int(time.time()))
+        signed_payload = f'{timestamp}.{payload.decode()}'
+        signature = hmac.new(
+            secret.encode('utf-8'),
+            signed_payload.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        header = f't={timestamp},v1={signature}'
+        self.assertTrue(verify_webhook_signature(payload, header))
+
+    @override_settings(
+        STRIPE={
+            'SECRET_KEY': 'sk_test',
+            'PUBLISHABLE_KEY': 'pk_test',
+            'WEBHOOK_SECRET': 'whsec_test_secret',
+            'ENABLED': True,
+        },
+    )
+    def test_verify_webhook_signature_rejects_tampered_payload(self):
+        import hashlib
+        import hmac
+        import time
+
+        from integrations.stripe.client import verify_webhook_signature
+
+        secret = 'whsec_test_secret'
+        payload = b'{"id":"evt_test"}'
+        timestamp = str(int(time.time()))
+        signed_payload = f'{timestamp}.{payload.decode()}'
+        signature = hmac.new(
+            secret.encode('utf-8'),
+            signed_payload.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        header = f't={timestamp},v1={signature}'
+        self.assertFalse(verify_webhook_signature(b'{"id":"evt_bad"}', header))
 
 
 class OnboardingApiTests(TestCase):
@@ -736,6 +908,69 @@ class ApiSmokeTests(TestCase):
         self.assertEqual(res.status_code, 200)
 
 
+class BookingApiTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='student')
+        Group.objects.create(name='teacher')
+        self.teacher = User.objects.create_user('t1', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('s1', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        plan = MembershipPlan.objects.create(name='All access', price_cents=1000, ticket_allowance=10)
+        Membership.objects.create(
+            user=self.student,
+            plan=plan,
+            is_active=True,
+            tickets_remaining=10,
+        )
+        self.session = Session.objects.create(
+            teacher=self.teacher,
+            title='Open lesson',
+            start_time=timezone.now() + timedelta(days=2),
+            end_time=timezone.now() + timedelta(days=2, hours=1),
+            capacity=4,
+            status='open',
+        )
+        res = self.client.post(
+            '/api/auth/token/',
+            {'username': 's1', 'password': 'pass'},
+            content_type='application/json',
+        )
+        self.auth = f'Bearer {res.json()["access"]}'
+
+    def test_open_sessions_include_student_booked_flag(self):
+        create_booking(self.student, self.session)
+        res = self.client.get('/api/sessions/open/', HTTP_AUTHORIZATION=self.auth)
+        self.assertEqual(res.status_code, 200)
+        row = next(item for item in res.json() if item['id'] == self.session.id)
+        self.assertTrue(row['student_booked'])
+
+    def test_duplicate_booking_returns_clear_error(self):
+        create_booking(self.student, self.session)
+        res = self.client.post(
+            '/api/bookings/create/',
+            {'session_id': self.session.id},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('already have a booking', res.json()['detail'].lower())
+
+    def test_booking_create_includes_confirmation_email_fields(self):
+        self.student.email = 'student@example.com'
+        self.student.save(update_fields=['email'])
+        res = self.client.post(
+            '/api/bookings/create/',
+            {'session_id': self.session.id},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(res.status_code, 201)
+        body = res.json()
+        self.assertTrue(body['confirmation_email_sent'])
+        self.assertEqual(body['confirmation_email'], 'student@example.com')
+
+
 class UploadValidationTests(TestCase):
     def test_homework_rejects_oversized_file(self):
         big = SimpleUploadedFile('big.pdf', b'x' * (10 * 1024 * 1024 + 1))
@@ -973,6 +1208,10 @@ class ClassRequestTests(TestCase):
 
     def test_student_can_create_request_via_api(self):
         token = self._token(self.student)
+        self.student.email = 'student@example.com'
+        self.student.save(update_fields=['email'])
+        self.teacher.email = 'teacher@example.com'
+        self.teacher.save(update_fields=['email'])
         res = self.client.post(
             '/api/class-requests/',
             {
@@ -987,8 +1226,64 @@ class ClassRequestTests(TestCase):
             HTTP_AUTHORIZATION=f'Bearer {token}',
         )
         self.assertEqual(res.status_code, 201)
+        body = res.json()
+        self.assertNotIn('confirmation_email_sent', body)
+        self.assertTrue(body['teacher_email_sent'])
+        self.assertEqual(body['notification_email'], 'student@example.com')
         self.membership.refresh_from_db()
         self.assertEqual(self.membership.tickets_remaining, 3)
+
+    def test_availability_includes_slots(self):
+        token = self._token(self.student)
+        res = self.client.get(
+            f'/api/class-requests/availability/?teacher={self.teacher.id}&include_slots=true',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('slots', res.json())
+        self.assertTrue(len(res.json()['slots']) >= 1)
+
+    def test_open_class_request_any_teacher(self):
+        from scheduling.services.class_requests import create_open_class_request, pending_requests_for_teacher
+
+        request, error = create_open_class_request(
+            self.student,
+            subject='Piano',
+            level='Beginner',
+            focus='Technique',
+            start_time=self.start,
+            end_time=self.end,
+            tickets_requested=2,
+        )
+        self.assertIsNone(error)
+        self.assertTrue(request.open_to_any_teacher)
+        self.assertIsNone(request.teacher_id)
+        self.assertEqual(pending_requests_for_teacher(self.teacher).count(), 1)
+
+        approved, error = approve_class_request(self.teacher, request)
+        self.assertIsNone(error)
+        self.assertEqual(approved.teacher_id, self.teacher.id)
+        self.assertEqual(approved.class_offering_id, self.offering.id)
+
+    def test_open_class_request_via_api(self):
+        token = self._token(self.student)
+        res = self.client.post(
+            '/api/class-requests/',
+            {
+                'open_to_any_teacher': True,
+                'subject': 'Piano',
+                'level': 'Beginner',
+                'focus': 'Technique',
+                'start_time': self.start.isoformat(),
+                'end_time': self.end.isoformat(),
+                'tickets_requested': 2,
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(res.json()['open_to_any_teacher'])
+        self.assertIsNone(res.json()['teacher'])
 
 
 class TeacherSessionApiTests(TestCase):
@@ -1061,6 +1356,59 @@ class TeacherSessionApiTests(TestCase):
         self.assertEqual(res.status_code, 404)
         self.other_session.refresh_from_db()
         self.assertEqual(self.other_session.capacity, 1)
+
+    def test_create_session_with_add_special_availability(self):
+        from datetime import time
+
+        from scheduling.models import AvailabilityBlock, ClassOffering, SpecialAvailability
+
+        day = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=5)
+        AvailabilityBlock.objects.create(
+            teacher=self.teacher,
+            weekday=day.weekday(),
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+        )
+        offering = ClassOffering.objects.create(
+            teacher=self.teacher,
+            subject='Japanese',
+            level='Beginner',
+            focus='Speaking',
+            default_capacity=4,
+        )
+        session_start = day.replace(hour=14)
+        session_end = session_start + timedelta(hours=1)
+        token = self._token(self.teacher)
+        body = {
+            'class_offering': offering.id,
+            'start_time': session_start.isoformat(),
+            'end_time': session_end.isoformat(),
+        }
+        denied = self.client.post(
+            '/api/teacher/sessions/',
+            body,
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(denied.status_code, 400)
+        self.assertEqual(denied.json()['code'], 'outside_availability')
+        self.assertFalse(SpecialAvailability.objects.filter(teacher=self.teacher, date=day.date()).exists())
+
+        created = self.client.post(
+            '/api/teacher/sessions/',
+            {
+                **body,
+                'add_special_availability': True,
+                'special_availability_note': 'Makeup lesson',
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(created.status_code, 201)
+        special = SpecialAvailability.objects.get(teacher=self.teacher, date=day.date())
+        self.assertEqual(special.start_time, session_start.time())
+        self.assertEqual(special.end_time, session_end.time())
+        self.assertEqual(special.note, 'Makeup lesson')
 
 
 class InactiveUserApiTests(TestCase):
@@ -1267,6 +1615,9 @@ class GoogleOAuthTests(TestCase):
         )
         return res.json()['access']
 
+    @override_settings(
+        GOOGLE={'CLIENT_ID': '', 'CLIENT_SECRET': '', 'ENABLED': False, 'REDIRECT_URI': ''},
+    )
     def test_connect_returns_503_when_not_configured(self):
         token = self._token(self.teacher)
         res = self.client.get(
@@ -1286,7 +1637,7 @@ class GoogleOAuthTests(TestCase):
     def test_connect_returns_authorization_url(self):
         token = self._token(self.teacher)
         res = self.client.get(
-            '/api/integrations/google/connect/',
+            '/api/integrations/google/connect/?frontend_origin=http%3A%2F%2F127.0.0.1%3A5173',
             HTTP_AUTHORIZATION=f'Bearer {token}',
         )
         self.assertEqual(res.status_code, 200)
@@ -1294,6 +1645,22 @@ class GoogleOAuthTests(TestCase):
         self.assertIn('accounts.google.com', url)
         self.assertIn('test-client', url)
         self.assertIn('state=', url)
+
+    @override_settings(
+        GOOGLE={
+            'CLIENT_ID': 'test-client',
+            'CLIENT_SECRET': 'test-secret',
+            'ENABLED': True,
+            'REDIRECT_URI': 'http://127.0.0.1:8000/integrations/google/callback/',
+        },
+    )
+    def test_oauth_state_round_trips_frontend_origin_with_colons(self):
+        from integrations.google.oauth import make_state, parse_oauth_state
+
+        state = make_state(self.teacher, 'http://127.0.0.1:5173')
+        user_id, origin = parse_oauth_state(state)
+        self.assertEqual(user_id, self.teacher.id)
+        self.assertEqual(origin, 'http://127.0.0.1:5173')
 
     def test_student_cannot_connect(self):
         token = self._token(self.student)
@@ -1401,6 +1768,264 @@ class GoogleOAuthTests(TestCase):
         ):
             link = create_meet_link(session)
         self.assertEqual(link, 'https://meet.google.com/abc-defg-hij')
+
+
+class GoogleCalendarSyncTests(TestCase):
+    """Calendar event sync on session create / update / cancel."""
+
+    GOOGLE_SETTINGS = {
+        'CLIENT_ID': 'test-client',
+        'CLIENT_SECRET': 'test-secret',
+        'ENABLED': True,
+        'REDIRECT_URI': 'http://127.0.0.1:8000/integrations/google/callback/',
+    }
+
+    def setUp(self):
+        Group.objects.create(name='teacher')
+        self.teacher = User.objects.create_user('cal_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+
+    def _connect_teacher(self):
+        from scheduling.models import GoogleCredential
+
+        GoogleCredential.objects.create(
+            user=self.teacher,
+            access_token='ya29.test',
+            refresh_token='1//refresh',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+    def _session(self, **extra):
+        start = timezone.now() + timedelta(days=1)
+        return Session.objects.create(
+            teacher=self.teacher,
+            title='Calendar session',
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            capacity=2,
+            status='open',
+            meeting_provider='google_meet',
+            **extra,
+        )
+
+    @override_settings(GOOGLE=GOOGLE_SETTINGS)
+    def test_attach_meeting_link_stores_event_id(self):
+        from unittest.mock import patch
+
+        from scheduling.services.meetings import attach_meeting_link
+
+        self._connect_teacher()
+        session = self._session()
+        with patch(
+            'integrations.google.meet._insert_calendar_event',
+            return_value={
+                'id': 'evt_123',
+                'hangoutLink': 'https://meet.google.com/abc-defg-hij',
+            },
+        ):
+            attach_meeting_link(session)
+        session.refresh_from_db()
+        self.assertEqual(session.meeting_url, 'https://meet.google.com/abc-defg-hij')
+        self.assertEqual(session.google_calendar_event_id, 'evt_123')
+
+    def test_attach_meeting_link_placeholder_has_no_event_id(self):
+        from scheduling.services.meetings import attach_meeting_link
+
+        session = self._session()
+        attach_meeting_link(session)
+        session.refresh_from_db()
+        self.assertTrue(session.meeting_url.startswith('https://meet.google.com/lookup/'))
+        self.assertEqual(session.google_calendar_event_id, '')
+
+    @override_settings(GOOGLE=GOOGLE_SETTINGS)
+    def test_cancel_session_deletes_calendar_event(self):
+        from unittest.mock import patch
+
+        from scheduling.services.sessions import cancel_session
+
+        self._connect_teacher()
+        session = self._session(google_calendar_event_id='evt_123')
+        with patch('integrations.google.meet._calendar_request', return_value={}) as mock_request:
+            ok, error = cancel_session(session, self.teacher)
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        mock_request.assert_called_once()
+        self.assertEqual(mock_request.call_args.args[0], 'DELETE')
+        self.assertEqual(mock_request.call_args.kwargs['event_id'], 'evt_123')
+        session.refresh_from_db()
+        self.assertEqual(session.status, 'cancelled')
+        self.assertEqual(session.google_calendar_event_id, '')
+
+    @override_settings(GOOGLE=GOOGLE_SETTINGS)
+    def test_update_session_patches_calendar_event(self):
+        from unittest.mock import patch
+
+        from scheduling.services.sessions import update_session
+
+        self._connect_teacher()
+        session = self._session(google_calendar_event_id='evt_123')
+        new_start = timezone.now() + timedelta(days=2)
+        with patch('integrations.google.meet._calendar_request', return_value={}) as mock_request:
+            ok, error = update_session(
+                session,
+                self.teacher,
+                start_time=new_start,
+                end_time=new_start + timedelta(hours=1),
+            )
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        mock_request.assert_called_once()
+        self.assertEqual(mock_request.call_args.args[0], 'PATCH')
+        self.assertEqual(mock_request.call_args.kwargs['event_id'], 'evt_123')
+        body = mock_request.call_args.kwargs['body']
+        self.assertEqual(body['start']['dateTime'], new_start.isoformat())
+
+    def test_cancel_session_without_event_id_makes_no_api_call(self):
+        from unittest.mock import patch
+
+        from scheduling.services.sessions import cancel_session
+
+        session = self._session()
+        with patch('integrations.google.meet._calendar_request') as mock_request:
+            ok, _ = cancel_session(session, self.teacher)
+        self.assertTrue(ok)
+        mock_request.assert_not_called()
+
+    @override_settings(GOOGLE=GOOGLE_SETTINGS)
+    def test_cancel_session_survives_google_api_failure(self):
+        import urllib.error
+        from unittest.mock import patch
+
+        from scheduling.services.sessions import cancel_session
+
+        self._connect_teacher()
+        session = self._session(google_calendar_event_id='evt_123')
+        with patch(
+            'integrations.google.meet._calendar_request',
+            side_effect=urllib.error.URLError('network down'),
+        ):
+            ok, error = cancel_session(session, self.teacher)
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        session.refresh_from_db()
+        self.assertEqual(session.status, 'cancelled')
+        # Event id kept so a later retry/manual cleanup is possible.
+        self.assertEqual(session.google_calendar_event_id, 'evt_123')
+
+
+class SchedulingSlotTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='teacher')
+        self.teacher = User.objects.create_user('slot_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.slot_start = timezone.now().replace(hour=10, minute=0, second=0, microsecond=0) + timedelta(days=3)
+        self.slot_end = self.slot_start + timedelta(hours=2)
+        AvailabilityBlock.objects.create(
+            teacher=self.teacher,
+            weekday=self.slot_start.weekday(),
+            start_time=self.slot_start.time(),
+            end_time=self.slot_end.time(),
+        )
+
+    def test_scheduling_slots_within_availability_window(self):
+        from scheduling.services.scheduling_slots import scheduling_slot_options
+
+        slots = scheduling_slot_options(self.teacher, duration_minutes=60, step_minutes=60)
+        matching = [slot for slot in slots if slot['start'].startswith(self.slot_start.date().isoformat())]
+        self.assertGreaterEqual(len(matching), 2)
+
+    def test_scheduling_slots_api(self):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': 'slot_teacher', 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        res = self.client.get(
+            '/api/teacher/scheduling-slots/?duration_minutes=60',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('slots', res.json())
+
+
+class StudentRegistrationTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='student')
+
+    def test_register_creates_student_and_returns_tokens(self):
+        res = self.client.post(
+            '/api/auth/register/',
+            {
+                'username': 'new_student',
+                'email': 'new@example.com',
+                'password': 'validpass123',
+                'display_name': 'New Student',
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertIn('access', data)
+        self.assertIn('refresh', data)
+        self.assertEqual(data['user']['username'], 'new_student')
+        self.assertEqual(data['user']['roles'], ['student'])
+
+        user = User.objects.get(username='new_student')
+        self.assertTrue(user.check_password('validpass123'))
+        self.assertTrue(user.groups.filter(name='student').exists())
+
+    def test_register_rejects_duplicate_username(self):
+        User.objects.create_user('taken', email='a@example.com', password='pass')
+        res = self.client.post(
+            '/api/auth/register/',
+            {
+                'username': 'taken',
+                'email': 'b@example.com',
+                'password': 'validpass123',
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(res.status_code, 400)
+
+
+class ClassCatalogTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        self.staff = User.objects.create_user('staff_catalog', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_catalog', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+
+    def _token(self, user):
+        return self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+
+    def test_bulk_add_topics_and_read_catalog(self):
+        from scheduling.services.class_catalog import create_catalog_focus, create_catalog_level, create_catalog_subject
+
+        subject, _ = create_catalog_subject('Japanese')
+        level, _ = create_catalog_level(subject.id, 'Beginner')
+        focus, _ = create_catalog_focus(level.id, 'Grammar')
+
+        staff_auth = {'HTTP_AUTHORIZATION': f'Bearer {self._token(self.staff)}'}
+        res = self.client.post(
+            f'/api/staff/class-catalog/focuses/{focus.id}/topics/bulk/',
+            {'topics': 'Verbs\nParticles\nAdjectives'},
+            content_type='application/json',
+            **staff_auth,
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(len(res.json()['topics']), 3)
+
+        teacher_auth = {'HTTP_AUTHORIZATION': f'Bearer {self._token(self.teacher)}'}
+        tree = self.client.get('/api/class-catalog/', **teacher_auth).json()
+        self.assertEqual(tree['subjects'][0]['name'], 'Japanese')
+        topics = tree['subjects'][0]['levels'][0]['focuses'][0]['topics']
+        self.assertEqual([topic['title'] for topic in topics], ['Verbs', 'Particles', 'Adjectives'])
 
 
 class LLMUrlValidationTests(TestCase):

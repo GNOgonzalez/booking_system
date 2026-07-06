@@ -1,10 +1,13 @@
+import logging
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, status
+from rest_framework.fields import DateTimeField
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -38,15 +41,24 @@ from scheduling.models import (
     Session,
     SpecialAvailability,
 )
-from scheduling.services.availability import session_within_availability
-from scheduling.services.booking import cancel_booking, create_booking
-from scheduling.services.meetings import create_meeting_link
+from scheduling.services.availability import (
+    request_wants_special_availability,
+    resolve_session_availability,
+    session_within_availability,
+)
+from scheduling.services.booking import booking_block_reason, cancel_booking, create_booking
+from scheduling.services.meetings import attach_meeting_link
 from scheduling.services.membership import (
     active_memberships_for,
     allowed_class_ids_for_user,
     total_tickets_remaining,
 )
-from scheduling.services.payments import get_available_plans, payment_mode, purchase_membership
+from scheduling.services.payments import (
+    get_available_plans,
+    get_payment_status,
+    payment_mode,
+    purchase_membership,
+)
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
 from scheduling.services.teacher_permissions import (
     TEACHER_PERMISSION_DEFS,
@@ -54,6 +66,8 @@ from scheduling.services.teacher_permissions import (
     permissions_for_teacher,
     teacher_can,
 )
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -85,7 +99,12 @@ class OpenSessionListView(generics.ListAPIView):
             qs = qs.filter(
                 Q(class_offering__isnull=True) | Q(class_offering_id__in=allowed_ids),
             )
-        return sessions_for_list(qs)
+        booked = Booking.objects.filter(
+            student=self.request.user,
+            session_id=OuterRef('pk'),
+            status='confirmed',
+        )
+        return sessions_for_list(qs).annotate(student_booked=Exists(booked))
 
 
 class MyBookingListView(generics.ListAPIView):
@@ -108,14 +127,15 @@ class BookingCreateView(APIView):
         session = Session.objects.filter(pk=serializer.validated_data['session_id']).first()
         if session is None:
             return Response({'detail': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if create_booking(request.user, session):
-            booking = Booking.objects.filter(
-                student=request.user,
-                session=session,
-                status='confirmed',
-            ).latest('created_at')
-            return Response(BookingSerializer(booking).data, status=status.HTTP_201_CREATED)
-        return Response({'detail': 'Booking not allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        result = create_booking(request.user, session)
+        if result:
+            booking, notifications = result
+            data = BookingSerializer(booking).data
+            data['confirmation_email_sent'] = notifications['student_email_sent']
+            data['confirmation_email'] = request.user.email or ''
+            return Response(data, status=status.HTTP_201_CREATED)
+        reason = booking_block_reason(request.user, session) or 'Booking not allowed.'
+        return Response({'detail': reason}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class BookingCancelView(APIView):
@@ -155,9 +175,17 @@ class TeacherSessionListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         start = serializer.validated_data['start_time']
         end = serializer.validated_data['end_time']
-        if not session_within_availability(request.user, start, end):
+        ok, detail = resolve_session_availability(
+            request.user,
+            start,
+            end,
+            acting_user=request.user,
+            add_special=request_wants_special_availability(request),
+            special_note=(request.data.get('special_availability_note') or '').strip(),
+        )
+        if not ok:
             return Response(
-                {'detail': 'Session time is outside your availability.'},
+                {'detail': detail, 'code': 'outside_availability'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         self.perform_create(serializer)
@@ -166,8 +194,7 @@ class TeacherSessionListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         session = serializer.save(teacher=self.request.user, status='open')
-        session.meeting_url = create_meeting_link(session)
-        session.save(update_fields=['meeting_url'])
+        attach_meeting_link(session)
 
 
 class TeacherSessionDetailView(APIView):
@@ -317,6 +344,57 @@ class TeacherSpecialAvailabilityListCreateView(generics.ListCreateAPIView):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('You do not have permission to set availability.')
         serializer.save(teacher=self.request.user)
+
+
+class TeacherSessionAvailabilityCheckView(APIView):
+    """Preflight check — whether a session window fits weekly or special availability."""
+
+    permission_classes = [IsTeacher]
+
+    def get(self, request):
+        start_raw = request.query_params.get('start_time')
+        end_raw = request.query_params.get('end_time')
+        if not start_raw or not end_raw:
+            return Response(
+                {'detail': 'start_time and end_time are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        field = DateTimeField()
+        try:
+            start = field.to_internal_value(start_raw)
+            end = field.to_internal_value(end_raw)
+        except Exception:
+            return Response(
+                {'detail': 'Invalid start_time or end_time.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if end <= start:
+            return Response(
+                {'detail': 'end_time must be after start_time.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        available = session_within_availability(request.user, start, end)
+        return Response({'available': available})
+
+
+class TeacherSchedulingSlotsView(APIView):
+    """Upcoming bookable slots inside the teacher's availability windows."""
+
+    permission_classes = [IsTeacher]
+
+    def get(self, request):
+        from scheduling.services.scheduling_slots import scheduling_slot_options
+
+        days = min(int(request.query_params.get('days', 28)), 90)
+        duration = min(max(int(request.query_params.get('duration_minutes', 60)), 15), 240)
+        step = min(max(int(request.query_params.get('step_minutes', 30)), 15), 120)
+        slots = scheduling_slot_options(
+            request.user,
+            days=days,
+            duration_minutes=duration,
+            step_minutes=step,
+        )
+        return Response({'slots': slots})
 
 
 class TeacherClassOfferingListCreateView(generics.ListCreateAPIView):
@@ -545,20 +623,34 @@ class MembershipCheckoutView(APIView):
         return Response(result, status=status.HTTP_201_CREATED)
 
 
+class MembershipPaymentStatusView(APIView):
+    """Poll Stripe checkout fulfillment for the logged-in student."""
+
+    permission_classes = [IsStudent]
+
+    def get(self, request, payment_id):
+        result, error = get_payment_status(request.user, payment_id)
+        if error:
+            return Response({'detail': error}, status=status.HTTP_404_NOT_FOUND)
+        return Response(result)
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class StripeWebhookView(APIView):
     """Stripe webhook endpoint — no JWT; verified by Stripe-Signature."""
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    parser_classes = []  # must read raw body for signature verification
 
     def post(self, request):
         from integrations.stripe.webhooks import handle_webhook_request
 
-        payload = request.body
+        payload = request._request.body
         signature = request.META.get('HTTP_STRIPE_SIGNATURE', '')
         ok, message = handle_webhook_request(payload, signature)
         if not ok:
+            logger.warning('Stripe webhook rejected: %s', message)
             code = status.HTTP_400_BAD_REQUEST
             if 'not configured' in message.lower():
                 code = status.HTTP_503_SERVICE_UNAVAILABLE

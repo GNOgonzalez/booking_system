@@ -1,19 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
+import {
+  datetimeLocalToIso,
+  formatDateTime,
+  toDatetimeLocal,
+} from '../utils/datetime.js'
 import { useScoreDimensions, scoreValue } from '../hooks/useScoreDimensions.js'
 import SessionReportForm from './SessionReportForm.jsx'
-
-function formatDateTime(iso) {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
 
 function formatDuration(startIso, endIso) {
   const mins = Math.round((new Date(endIso) - new Date(startIso)) / 60000)
@@ -21,12 +15,6 @@ function formatDuration(startIso, endIso) {
   const h = Math.floor(mins / 60)
   const m = mins % 60
   return m ? `${h} hr ${m} min` : `${h} hour${h > 1 ? 's' : ''}`
-}
-
-function toDatetimeLocal(iso) {
-  const d = new Date(iso)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 export default function SessionDetailPanel({
@@ -90,8 +78,8 @@ export default function SessionDetailPanel({
         method: 'PATCH',
         body: JSON.stringify({
           class_offering: Number(editForm.class_offering),
-          start_time: editForm.start_time,
-          end_time: editForm.end_time,
+          start_time: datetimeLocalToIso(editForm.start_time),
+          end_time: datetimeLocalToIso(editForm.end_time),
           capacity: Number(editForm.capacity),
         }),
       })

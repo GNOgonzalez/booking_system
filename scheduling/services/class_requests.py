@@ -3,10 +3,12 @@
 from datetime import datetime, timedelta
 
 from django.contrib.auth import get_user_model
+from django.db.models import Min
 from django.utils import timezone
 
 from scheduling.models import ClassOffering, ClassRequest, Session
 from scheduling.services.availability import session_within_availability, times_overlap
+from scheduling.services.timezones import combine_in_teacher_tz
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.membership import (
     _membership_allows_class,
@@ -14,7 +16,7 @@ from scheduling.services.membership import (
     allowed_class_ids_for_user,
     has_active_membership,
 )
-from scheduling.services.notifications import send_booking_confirmation
+from scheduling.services.notifications import notify_booking_created
 from scheduling.services.sessions import class_topic_belongs_to_offering, session_display_title
 from scheduling.services.tickets import hold_tickets, release_tickets
 
@@ -23,6 +25,16 @@ User = get_user_model()
 
 def _teacher_queryset():
     return User.objects.filter(groups__name='teacher', is_active=True)
+
+
+def _allowed_offerings_queryset(user):
+    allowed_ids = allowed_class_ids_for_user(user)
+    qs = ClassOffering.objects.filter(is_active=True)
+    if allowed_ids is not None:
+        if not allowed_ids:
+            return ClassOffering.objects.none()
+        qs = qs.filter(pk__in=allowed_ids)
+    return qs
 
 
 def teachers_for_student_requests(user):
@@ -40,6 +52,54 @@ def teachers_for_student_requests(user):
     return [teacher for teacher in qs.order_by('username') if teacher_has_availability_blocks(teacher)]
 
 
+def open_class_profiles_for_student(user):
+    """Distinct subject/level/focus profiles bookable across any eligible teacher."""
+    if not has_active_membership(user):
+        return []
+    from scheduling.services.availability import teacher_has_availability_blocks
+
+    allowed = _allowed_offerings_queryset(user).select_related('teacher')
+    profiles = {}
+    for offering in allowed.order_by('subject', 'level', 'focus', 'teacher__username'):
+        teacher = offering.teacher
+        if not teacher_has_availability_blocks(teacher):
+            continue
+        key = (offering.subject, offering.level, offering.focus)
+        row = profiles.get(key)
+        if row is None:
+            profiles[key] = {
+                'subject': offering.subject,
+                'level': offering.level,
+                'focus': offering.focus,
+                'label': offering.display_name,
+                'min_ticket_cost': offering.ticket_cost or 1,
+                'teacher_count': 1,
+            }
+        else:
+            row['teacher_count'] += 1
+            row['min_ticket_cost'] = min(row['min_ticket_cost'], offering.ticket_cost or 1)
+    return list(profiles.values())
+
+
+def teachers_for_open_profile(user, subject, level, focus):
+    """Teachers with availability who teach the given class profile."""
+    if not has_active_membership(user):
+        return []
+    from scheduling.services.availability import teacher_has_availability_blocks
+
+    allowed = _allowed_offerings_queryset(user).filter(
+        subject=subject,
+        level=level,
+        focus=focus,
+    )
+    teacher_ids = allowed.values_list('teacher_id', flat=True).distinct()
+    teachers = []
+    for teacher in _teacher_queryset().filter(pk__in=teacher_ids).order_by('username'):
+        if teacher_has_availability_blocks(teacher):
+            teachers.append(teacher)
+    return teachers
+
+
 def classes_for_teacher_request(user, teacher):
     allowed_ids = allowed_class_ids_for_user(user)
     qs = ClassOffering.objects.filter(teacher=teacher, is_active=True).prefetch_related('topics')
@@ -55,6 +115,21 @@ def membership_for_class_request(user, class_offering, tickets):
         if membership.tickets_remaining >= tickets:
             return membership
     return None
+
+
+def membership_for_open_class_request(user, subject, level, focus, tickets):
+    qs = _allowed_offerings_queryset(user).filter(subject=subject, level=level, focus=focus)
+    for offering in qs:
+        membership = membership_for_class_request(user, offering, tickets)
+        if membership is not None:
+            return membership
+    return None
+
+
+def min_tickets_for_open_profile(user, subject, level, focus):
+    qs = _allowed_offerings_queryset(user).filter(subject=subject, level=level, focus=focus)
+    value = qs.aggregate(min_cost=Min('ticket_cost'))['min_cost']
+    return value or 1
 
 
 def _occupied_intervals(teacher, *, exclude_request_id=None):
@@ -84,6 +159,51 @@ def slot_is_available(teacher, start_time, end_time, *, exclude_request_id=None)
     return True, None
 
 
+def open_slot_is_available(user, subject, level, focus, start_time, end_time):
+    if start_time >= end_time:
+        return False, 'End time must be after start time.'
+    if start_time <= timezone.now():
+        return False, 'Choose a future time.'
+    teachers = teachers_for_open_profile(user, subject, level, focus)
+    if not teachers:
+        return False, 'No teachers are available for this class.'
+    for teacher in teachers:
+        ok, _ = slot_is_available(teacher, start_time, end_time)
+        if ok:
+            return True, None
+    return False, 'No teacher is available at that time.'
+
+
+def _open_request_matches_teacher(request, teacher):
+    if not request.open_to_any_teacher:
+        return False
+    return ClassOffering.objects.filter(
+        teacher=teacher,
+        is_active=True,
+        subject=request.subject,
+        level=request.level,
+        focus=request.focus,
+    ).exists()
+
+
+def teacher_can_access_request(teacher, request):
+    if request.teacher_id == teacher.id:
+        return True
+    if request.open_to_any_teacher and request.teacher_id is None and request.status == ClassRequest.STATUS_PENDING:
+        return _open_request_matches_teacher(request, teacher)
+    return False
+
+
+def matching_offering_for_teacher(teacher, request):
+    return ClassOffering.objects.filter(
+        teacher=teacher,
+        is_active=True,
+        subject=request.subject,
+        level=request.level,
+        focus=request.focus,
+    ).order_by('subject', 'level', 'focus').first()
+
+
 def availability_snapshot(teacher, *, days=28):
     """Availability windows and busy intervals for the next N days."""
     from scheduling.models import AvailabilityBlock, SpecialAvailability
@@ -96,8 +216,8 @@ def availability_snapshot(teacher, *, days=28):
         day = now.date()
         while day <= end_date:
             if day.weekday() == block.weekday:
-                start = timezone.make_aware(datetime.combine(day, block.start_time))
-                end = timezone.make_aware(datetime.combine(day, block.end_time))
+                start = combine_in_teacher_tz(teacher, day, block.start_time)
+                end = combine_in_teacher_tz(teacher, day, block.end_time)
                 if end > now:
                     windows.append({
                         'date': day.isoformat(),
@@ -110,8 +230,8 @@ def availability_snapshot(teacher, *, days=28):
             day += timedelta(days=1)
 
     for block in SpecialAvailability.objects.filter(teacher=teacher, date__gte=now.date(), date__lte=end_date):
-        start = timezone.make_aware(datetime.combine(block.date, block.start_time))
-        end = timezone.make_aware(datetime.combine(block.date, block.end_time))
+        start = combine_in_teacher_tz(teacher, block.date, block.start_time)
+        end = combine_in_teacher_tz(teacher, block.date, block.end_time)
         if end > now:
             windows.append({
                 'date': block.date.isoformat(),
@@ -135,6 +255,30 @@ def availability_snapshot(teacher, *, days=28):
     return {'windows': windows, 'busy': busy}
 
 
+def open_availability_snapshot(user, subject, level, focus, *, days=28):
+    """Merged availability windows and slots across teachers for an open class profile."""
+    from scheduling.services.scheduling_slots import scheduling_slot_options
+
+    teachers = teachers_for_open_profile(user, subject, level, focus)
+    windows = []
+    busy = []
+    slots = []
+    seen_slots = set()
+    for teacher in teachers:
+        snapshot = availability_snapshot(teacher, days=days)
+        windows.extend(snapshot['windows'])
+        busy.extend(snapshot['busy'])
+        for slot in scheduling_slot_options(teacher, days=days):
+            key = slot['start']
+            if key not in seen_slots:
+                seen_slots.add(key)
+                slots.append(slot)
+    windows.sort(key=lambda item: item['start'])
+    busy.sort(key=lambda item: item['start'])
+    slots.sort(key=lambda item: item['start'])
+    return {'windows': windows, 'busy': busy, 'slots': slots}
+
+
 def create_class_request(
     user,
     *,
@@ -151,8 +295,10 @@ def create_class_request(
         return None, 'Active membership required.'
     if teacher is None or not _teacher_queryset().filter(pk=teacher.pk).exists():
         return None, 'Teacher not found.'
-    if class_offering.teacher_id != teacher.id or not class_offering.is_active:
-        return None, 'Class not found for this teacher.'
+    if class_offering.teacher_id != teacher.id:
+        return None, 'That class is not offered by this teacher.'
+    if not class_offering.is_active:
+        return None, 'That class is no longer available.'
     if class_topic is not None and not class_topic_belongs_to_offering(class_topic.id, class_offering):
         return None, 'Topic not found in this class.'
     min_tickets = class_offering.ticket_cost or 1
@@ -193,8 +339,73 @@ def create_class_request(
     return request, None
 
 
+def create_open_class_request(
+    user,
+    *,
+    subject,
+    level,
+    focus,
+    start_time,
+    end_time,
+    tickets_requested,
+):
+    if not user.groups.filter(name='student').exists() or not user.is_active:
+        return None, 'Only active students can request classes.'
+    if not has_active_membership(user):
+        return None, 'Active membership required.'
+    if not subject or not level or not focus:
+        return None, 'Class profile is required.'
+    if not teachers_for_open_profile(user, subject, level, focus):
+        return None, 'No teachers are available for this class.'
+
+    min_tickets = min_tickets_for_open_profile(user, subject, level, focus)
+    if tickets_requested < min_tickets:
+        return None, f'At least {min_tickets} ticket(s) required for this class.'
+
+    ok, error = open_slot_is_available(user, subject, level, focus, start_time, end_time)
+    if not ok:
+        return None, error
+
+    membership = membership_for_open_class_request(user, subject, level, focus, tickets_requested)
+    if membership is None:
+        return None, 'Not enough tickets or class not included in your membership.'
+
+    if ClassRequest.objects.filter(
+        student=user,
+        open_to_any_teacher=True,
+        teacher__isnull=True,
+        status=ClassRequest.STATUS_PENDING,
+        subject=subject,
+        level=level,
+        focus=focus,
+        start_time=start_time,
+        end_time=end_time,
+    ).exists():
+        return None, 'You already have a pending request for this time.'
+
+    if not hold_tickets(membership, tickets_requested):
+        return None, 'Not enough tickets available.'
+
+    request = ClassRequest.objects.create(
+        student=user,
+        teacher=None,
+        open_to_any_teacher=True,
+        subject=subject,
+        level=level,
+        focus=focus,
+        class_offering=None,
+        class_topic=None,
+        start_time=start_time,
+        end_time=end_time,
+        tickets_requested=tickets_requested,
+        membership=membership,
+        status=ClassRequest.STATUS_PENDING,
+    )
+    return request, None
+
+
 def update_pending_request(request, teacher, **fields):
-    if request.teacher_id != teacher.id or request.status != ClassRequest.STATUS_PENDING:
+    if not teacher_can_access_request(teacher, request) or request.status != ClassRequest.STATUS_PENDING:
         return None, 'Request not found.'
 
     class_offering = fields.get('class_offering', request.class_offering)
@@ -202,7 +413,18 @@ def update_pending_request(request, teacher, **fields):
     start_time = fields.get('start_time', request.start_time)
     end_time = fields.get('end_time', request.end_time)
 
-    if class_offering.teacher_id != teacher.id or not class_offering.is_active:
+    if request.open_to_any_teacher and request.teacher_id is None:
+        if class_offering is None:
+            class_offering = matching_offering_for_teacher(teacher, request)
+        if class_offering is None or class_offering.teacher_id != teacher.id:
+            return None, 'Class not found in your catalog.'
+        if (
+            class_offering.subject != request.subject
+            or class_offering.level != request.level
+            or class_offering.focus != request.focus
+        ):
+            return None, 'Class not found in your catalog.'
+    elif class_offering.teacher_id != teacher.id or not class_offering.is_active:
         return None, 'Class not found in your catalog.'
     if class_topic is not None and not class_topic_belongs_to_offering(class_topic.id, class_offering):
         return None, 'Topic not found in this class.'
@@ -211,8 +433,9 @@ def update_pending_request(request, teacher, **fields):
     if not ok:
         return None, error
 
-    request.class_offering = class_offering
-    request.class_topic = class_topic
+    if not request.open_to_any_teacher or request.teacher_id:
+        request.class_offering = class_offering
+        request.class_topic = class_topic
     request.start_time = start_time
     request.end_time = end_time
     request.save()
@@ -256,8 +479,16 @@ def delete_class_request(teacher, request):
 
 
 def approve_class_request(teacher, request, *, capacity=None):
-    if request.teacher_id != teacher.id or request.status != ClassRequest.STATUS_PENDING:
+    if not teacher_can_access_request(teacher, request) or request.status != ClassRequest.STATUS_PENDING:
         return None, 'Request not found.'
+
+    if request.open_to_any_teacher and request.teacher_id is None:
+        offering = matching_offering_for_teacher(teacher, request)
+        if offering is None:
+            return None, 'Class not found in your catalog.'
+        request.teacher = teacher
+        request.class_offering = offering
+        request.save(update_fields=['teacher', 'class_offering', 'updated_at'])
 
     ok, error = slot_is_available(
         teacher,
@@ -296,13 +527,29 @@ def approve_class_request(teacher, request, *, capacity=None):
     request.status = ClassRequest.STATUS_APPROVED
     request.session = session
     request.save(update_fields=['status', 'session', 'updated_at'])
-    send_booking_confirmation(booking)
+    notify_booking_created(booking)
     return request, None
 
 
 def pending_requests_for_teacher(teacher):
+    specific_ids = set(
+        ClassRequest.objects.filter(
+            teacher=teacher,
+            status=ClassRequest.STATUS_PENDING,
+        ).values_list('pk', flat=True)
+    )
+    open_ids = [
+        request.pk
+        for request in ClassRequest.objects.filter(
+            open_to_any_teacher=True,
+            teacher__isnull=True,
+            status=ClassRequest.STATUS_PENDING,
+        )
+        if _open_request_matches_teacher(request, teacher)
+    ]
+    all_ids = list(specific_ids | set(open_ids))
     return (
-        ClassRequest.objects.filter(teacher=teacher, status=ClassRequest.STATUS_PENDING)
+        ClassRequest.objects.filter(pk__in=all_ids)
         .select_related('student', 'class_offering', 'class_topic', 'membership')
     )
 

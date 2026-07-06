@@ -61,7 +61,8 @@ def verify_webhook_signature(payload, signature_header, *, tolerance=300):
     except ValueError:
         return False
 
-    signed_payload = f'{timestamp}.{payload}'
+    signed_payload = f'{timestamp}.{payload.decode("utf-8") if isinstance(payload, bytes) else payload}'
+    # Stripe uses the whole whsec_* secret string as the HMAC key — no decoding.
     expected = hmac.new(
         secret.encode('utf-8'),
         signed_payload.encode('utf-8'),

@@ -1,20 +1,41 @@
+import { browserTimezone } from './utils/datetime.js'
+
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
 
+const ACCESS_KEY = 'accessToken'
+const REFRESH_KEY = 'refreshToken'
+
+/** Per-tab storage so multiple roles can stay logged in in separate Chrome tabs. */
+const tokenStorage = () => sessionStorage
+
+function clearLegacyLocalTokens() {
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+}
+
+// Drop old shared localStorage tokens — they caused cross-tab account switching.
+clearLegacyLocalTokens()
+
 export function getTokens() {
+  const storage = tokenStorage()
   return {
-    access: localStorage.getItem('accessToken'),
-    refresh: localStorage.getItem('refreshToken'),
+    access: storage.getItem(ACCESS_KEY),
+    refresh: storage.getItem(REFRESH_KEY),
   }
 }
 
 export function clearTokens() {
-  localStorage.removeItem('accessToken')
-  localStorage.removeItem('refreshToken')
+  const storage = tokenStorage()
+  storage.removeItem(ACCESS_KEY)
+  storage.removeItem(REFRESH_KEY)
+  clearLegacyLocalTokens()
 }
 
 export function saveTokens(access, refresh) {
-  localStorage.setItem('accessToken', access)
-  localStorage.setItem('refreshToken', refresh)
+  const storage = tokenStorage()
+  storage.setItem(ACCESS_KEY, access)
+  storage.setItem(REFRESH_KEY, refresh)
+  clearLegacyLocalTokens()
 }
 
 export async function login(username, password) {
@@ -25,6 +46,20 @@ export async function login(username, password) {
   })
   if (!res.ok) {
     throw new Error('Login failed')
+  }
+  const data = await res.json()
+  saveTokens(data.access, data.refresh)
+  return data
+}
+
+export async function register({ username, email, password, display_name = '' }) {
+  const res = await fetch(`${API_BASE}/api/auth/register/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email, password, display_name }),
+  })
+  if (!res.ok) {
+    throw new Error(await parseResponseError(res))
   }
   const data = await res.json()
   saveTokens(data.access, data.refresh)
@@ -62,6 +97,14 @@ async function parseResponseError(res) {
     const json = JSON.parse(text)
     if (json.detail) message = json.detail
     else if (json.message) message = json.message
+    else if (typeof json === 'object' && json !== null) {
+      const parts = []
+      for (const [key, val] of Object.entries(json)) {
+        if (Array.isArray(val)) parts.push(`${key}: ${val.join(' ')}`)
+        else if (typeof val === 'string') parts.push(val)
+      }
+      if (parts.length) message = parts.join(' ')
+    }
   } catch {
     // keep raw text
   }
@@ -176,6 +219,20 @@ export async function apiDownload(path, filename) {
 
 export function getMe() {
   return apiFetch('/api/me/')
+}
+
+/** Load profile and sync browser timezone when profile still uses UTC. */
+export async function loadMeProfile() {
+  const me = await getMe()
+  const browserTz = browserTimezone()
+  if (browserTz && browserTz !== 'UTC' && (!me.timezone || me.timezone === 'UTC')) {
+    try {
+      return await updateMe({ timezone: browserTz })
+    } catch {
+      return me
+    }
+  }
+  return me
 }
 
 export function updateMe(payload) {

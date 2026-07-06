@@ -11,6 +11,7 @@ from scheduling.api.serializers import (
     ClassRequestCreateSerializer,
     ClassRequestSerializer,
     ClassRequestUpdateSerializer,
+    OpenClassProfileSerializer,
     TeacherRequestOptionSerializer,
 )
 from scheduling.models import ClassOffering, ClassRequest, ClassTopic
@@ -20,15 +21,30 @@ from scheduling.services.class_requests import (
     cancel_pending_request,
     classes_for_teacher_request,
     create_class_request,
+    create_open_class_request,
     delete_class_request,
     deny_class_request,
+    open_availability_snapshot,
+    open_class_profiles_for_student,
     pending_requests_for_teacher,
     requests_for_student,
+    teacher_can_access_request,
     teachers_for_student_requests,
     update_pending_request,
 )
+from scheduling.services.notifications import notify_class_request_created
+from scheduling.services.scheduling_slots import scheduling_slot_options
 
 User = get_user_model()
+
+
+def _class_request_response(class_request, user, *, status_code=status.HTTP_201_CREATED):
+    data = ClassRequestSerializer(class_request).data
+    notifications = notify_class_request_created(class_request)
+    data['teacher_email_sent'] = notifications['teacher_email_sent']
+    data['teachers_notified'] = notifications['teachers_notified']
+    data['notification_email'] = user.email or ''
+    return Response(data, status=status_code)
 
 
 def _teacher_from_request(request, teacher_id=None):
@@ -37,6 +53,50 @@ def _teacher_from_request(request, teacher_id=None):
     if request.user.groups.filter(name='teacher').exists():
         return request.user
     return None
+
+
+class ClassRequestOpenClassesView(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        profiles = open_class_profiles_for_student(request.user)
+        return Response(OpenClassProfileSerializer(profiles, many=True).data)
+
+
+class ClassRequestOpenAvailabilityView(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        subject = request.query_params.get('subject', '').strip()
+        level = request.query_params.get('level', '').strip()
+        focus = request.query_params.get('focus', '').strip()
+        if not subject or not level or not focus:
+            return Response(
+                {'detail': 'subject, level, and focus are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        days = int(request.query_params.get('days', 28))
+        duration = int(request.query_params.get('duration_minutes', 60))
+        snapshot = open_availability_snapshot(
+            request.user,
+            subject,
+            level,
+            focus,
+            days=days,
+        )
+        if duration != 60:
+            from scheduling.services.class_requests import teachers_for_open_profile
+
+            slots = []
+            seen = set()
+            for teacher in teachers_for_open_profile(request.user, subject, level, focus):
+                for slot in scheduling_slot_options(teacher, days=days, duration_minutes=duration):
+                    if slot['start'] not in seen:
+                        seen.add(slot['start'])
+                        slots.append(slot)
+            slots.sort(key=lambda item: item['start'])
+            snapshot['slots'] = slots
+        return Response(snapshot)
 
 
 class ClassRequestTeacherListView(APIView):
@@ -76,7 +136,15 @@ class ClassRequestAvailabilityView(APIView):
         if teacher is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
         days = int(request.query_params.get('days', 28))
-        return Response(availability_snapshot(teacher, days=days))
+        duration = int(request.query_params.get('duration_minutes', 60))
+        snapshot = availability_snapshot(teacher, days=days)
+        if request.query_params.get('include_slots', '').lower() in ('1', 'true', 'yes'):
+            snapshot['slots'] = scheduling_slot_options(
+                teacher,
+                days=days,
+                duration_minutes=duration,
+            )
+        return Response(snapshot)
 
 
 class StudentClassRequestListCreateView(APIView):
@@ -90,10 +158,31 @@ class StudentClassRequestListCreateView(APIView):
         serializer = ClassRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        teacher = User.objects.filter(pk=data['teacher'], groups__name='teacher', is_active=True).first()
+
+        if data.get('open_to_any_teacher'):
+            created, error = create_open_class_request(
+                request.user,
+                subject=data.get('subject', '').strip(),
+                level=data.get('level', '').strip(),
+                focus=data.get('focus', '').strip(),
+                start_time=data['start_time'],
+                end_time=data['end_time'],
+                tickets_requested=data['tickets_requested'],
+            )
+            if error:
+                return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+            return _class_request_response(created, request.user)
+
+        teacher_id = data.get('teacher')
+        if not teacher_id:
+            return Response({'detail': 'Teacher is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        teacher = User.objects.filter(pk=teacher_id, groups__name='teacher', is_active=True).first()
         if teacher is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
-        offering = ClassOffering.objects.filter(pk=data['class_offering'], teacher=teacher, is_active=True).first()
+        offering_id = data.get('class_offering')
+        if not offering_id:
+            return Response({'detail': 'Class offering is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        offering = ClassOffering.objects.filter(pk=offering_id, teacher=teacher, is_active=True).first()
         if offering is None:
             return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
         topic = None
@@ -113,7 +202,7 @@ class StudentClassRequestListCreateView(APIView):
         )
         if error:
             return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ClassRequestSerializer(created).data, status=status.HTTP_201_CREATED)
+        return _class_request_response(created, request.user)
 
 
 class StudentClassRequestDetailView(APIView):
@@ -153,8 +242,8 @@ class TeacherClassRequestDetailView(APIView):
         is_staff = request.user.groups.filter(name='staff').exists()
         if teacher_id is None and not is_staff and teacher != request.user:
             return None, Response({'detail': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
-        class_request = ClassRequest.objects.filter(pk=pk, teacher=teacher).first()
-        if class_request is None:
+        class_request = ClassRequest.objects.filter(pk=pk).first()
+        if class_request is None or not teacher_can_access_request(teacher, class_request):
             return None, Response({'detail': 'Request not found.'}, status=status.HTTP_404_NOT_FOUND)
         return class_request, None
 
@@ -201,8 +290,8 @@ class TeacherClassRequestApproveView(APIView):
         teacher = _teacher_from_request(request, teacher_id)
         if teacher is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
-        class_request = ClassRequest.objects.filter(pk=pk, teacher=teacher).first()
-        if class_request is None:
+        class_request = ClassRequest.objects.filter(pk=pk).first()
+        if class_request is None or not teacher_can_access_request(teacher, class_request):
             return Response({'detail': 'Request not found.'}, status=status.HTTP_404_NOT_FOUND)
         capacity = request.data.get('capacity')
         if capacity is not None:

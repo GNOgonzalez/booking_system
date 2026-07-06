@@ -4,6 +4,7 @@ State is a signed token carrying the user id, so the browser callback (which has
 no JWT) can attach the credential to the right account without trusting input.
 """
 
+import base64
 import json
 import urllib.error
 import urllib.parse
@@ -37,22 +38,50 @@ def redirect_uri():
     )
 
 
-def make_state(user):
-    return signing.TimestampSigner(salt=STATE_SALT).sign(str(user.id))
+def _encode_origin(origin):
+    if not origin:
+        return ''
+    return base64.urlsafe_b64encode(origin.encode('utf-8')).decode('ascii').rstrip('=')
 
 
-def user_id_from_state(state):
+def _decode_origin(encoded):
+    if not encoded:
+        return ''
+    padding = '=' * (-len(encoded) % 4)
+    return base64.urlsafe_b64decode((encoded + padding).encode('ascii')).decode('utf-8')
+
+
+def make_state(user, frontend_origin=''):
+    # Origin URLs contain ":" — base64 keeps the signed payload colon-free for TimestampSigner.
+    payload = f'{user.id}|{_encode_origin(frontend_origin)}'
+    return signing.TimestampSigner(salt=STATE_SALT).sign(payload)
+
+
+def parse_oauth_state(state):
+    """Return (user_id, frontend_origin) from signed state."""
     try:
-        return int(
-            signing.TimestampSigner(salt=STATE_SALT).unsign(
-                state, max_age=STATE_MAX_AGE_SECONDS,
-            )
+        raw = signing.TimestampSigner(salt=STATE_SALT).unsign(
+            state, max_age=STATE_MAX_AGE_SECONDS,
         )
-    except (signing.BadSignature, ValueError) as exc:
+    except signing.BadSignature as exc:
+        raise GoogleOAuthError('Invalid or expired OAuth state.') from exc
+    if '|' in raw:
+        user_id_str, origin_encoded = raw.split('|', 1)
+        frontend_origin = _decode_origin(origin_encoded)
+    else:
+        user_id_str, frontend_origin = raw, ''
+    try:
+        return int(user_id_str), frontend_origin
+    except ValueError as exc:
         raise GoogleOAuthError('Invalid or expired OAuth state.') from exc
 
 
-def build_authorization_url(user):
+def user_id_from_state(state):
+    user_id, _ = parse_oauth_state(state)
+    return user_id
+
+
+def build_authorization_url(user, frontend_origin=''):
     if not google_enabled():
         raise GoogleOAuthError('Google OAuth is not configured.')
     params = {
@@ -62,7 +91,7 @@ def build_authorization_url(user):
         'scope': CALENDAR_SCOPE,
         'access_type': 'offline',
         'prompt': 'consent',
-        'state': make_state(user),
+        'state': make_state(user, frontend_origin),
     }
     return f'{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}'
 

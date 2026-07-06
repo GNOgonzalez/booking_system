@@ -4,6 +4,10 @@ from .models import (
     AvailabilityBlock,
     BlogPost,
     Booking,
+    CatalogFocus,
+    CatalogLevel,
+    CatalogSubject,
+    CatalogTopic,
     ClassOffering,
     ClassRequest,
     ClassTopic,
@@ -28,6 +32,10 @@ admin.site.register(Profile)
 admin.site.register(ClassType)
 admin.site.register(ClassOffering)
 admin.site.register(ClassTopic)
+admin.site.register(CatalogSubject)
+admin.site.register(CatalogLevel)
+admin.site.register(CatalogFocus)
+admin.site.register(CatalogTopic)
 admin.site.register(TeacherPermission)
 admin.site.register(StudioGlossary)
 admin.site.register(StudioBranding)

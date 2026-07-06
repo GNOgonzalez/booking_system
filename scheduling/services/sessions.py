@@ -87,6 +87,9 @@ def update_session(
         session.capacity = capacity
 
     session.save()
+
+    from scheduling.services.meetings import sync_meeting_update
+    sync_meeting_update(session)
     return True, None
 
 
@@ -97,4 +100,7 @@ def cancel_session(session, teacher):
         return False, 'Session is already cancelled.'
     session.status = 'cancelled'
     session.save(update_fields=['status'])
+
+    from scheduling.services.meetings import sync_meeting_cancel
+    sync_meeting_cancel(session)
     return True, None

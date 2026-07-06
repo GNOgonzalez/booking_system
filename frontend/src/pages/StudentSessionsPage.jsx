@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../api.js'
+import BookingSuccessModal from '../components/BookingSuccessModal.jsx'
 import SessionCalendar from '../components/SessionCalendar.jsx'
 
 const TIME_BUCKETS = {
@@ -23,7 +24,7 @@ function uniqueOptions(sessions, idKey, labelKey) {
 export default function StudentSessionsPage() {
   const [sessions, setSessions] = useState([])
   const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
+  const [bookingSuccess, setBookingSuccess] = useState(null)
   const [booking, setBooking] = useState(false)
   const [ticketsRemaining, setTicketsRemaining] = useState(null)
   const [memberships, setMemberships] = useState([])
@@ -83,14 +84,15 @@ export default function StudentSessionsPage() {
 
   const book = async (sessionId) => {
     setError('')
-    setMessage('')
+    setBookingSuccess(null)
     setBooking(true)
+    const session = sessions.find((row) => row.id === sessionId)
     try {
-      await apiFetch('/api/bookings/create/', {
+      const result = await apiFetch('/api/bookings/create/', {
         method: 'POST',
         body: JSON.stringify({ session_id: sessionId }),
       })
-      setMessage('Booked!')
+      setBookingSuccess({ session, result })
       load()
     } catch (err) {
       setError(err.message)
@@ -117,8 +119,14 @@ export default function StudentSessionsPage() {
           <> You have <strong>{ticketsRemaining}</strong> booking ticket{ticketsRemaining === 1 ? '' : 's'} across your memberships.</>
         )}
       </p>
-      {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
+      {bookingSuccess && (
+        <BookingSuccessModal
+          session={bookingSuccess.session}
+          result={bookingSuccess.result}
+          onClose={() => setBookingSuccess(null)}
+        />
+      )}
       {!error && sessions.length > 0 && (
         <div className="card session-filters">
           <div className="row">

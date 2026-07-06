@@ -19,6 +19,7 @@ from scheduling.models import (
     Session,
 )
 from scheduling.services.glossary import ensure_default_glossary
+from scheduling.services.class_catalog import ensure_default_catalog
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.sessions import session_display_title
 from scheduling.services.teacher_permissions import ensure_default_permissions
@@ -27,11 +28,25 @@ from scheduling.services.teacher_permissions import ensure_default_permissions
 class Command(BaseCommand):
     help = 'Create auth groups and optional sandbox demo data.'
 
+    DEMO_USERNAMES = (
+        'demo_teacher',
+        'demo_student',
+        'demo_student_2',
+        'demo_student_3',
+        'demo_student_4',
+        'demo_staff',
+    )
+
     def add_arguments(self, parser):
         parser.add_argument(
             '--demo',
             action='store_true',
             help='Create sample class types, membership, curriculum, and a future session.',
+        )
+        parser.add_argument(
+            '--reset',
+            action='store_true',
+            help='Remove demo seed users and data before seeding (use with --demo).',
         )
 
     def _ensure_class_offering(self, teacher, subject, level, focus, topics, *, topics_ordered=False, **extra):
@@ -77,28 +92,12 @@ class Command(BaseCommand):
                 'billing_period_days': kwargs.get('billing_period_days', 30),
                 'ticket_allowance': kwargs.get('ticket_allowance', 10),
                 'is_active': True,
+                'subject': subject,
             },
         )
         subject_classes = [o for o in offerings if o.subject == subject]
         plan.allowed_classes.set(subject_classes)
         return plan
-
-    def _grant_membership(self, user, plan):
-        membership, created = Membership.objects.get_or_create(
-            user=user,
-            plan=plan,
-            defaults={
-                'is_active': True,
-                'valid_until': timezone.now().date() + timedelta(days=365),
-                'tickets_remaining': plan.ticket_allowance,
-            },
-        )
-        if not created and membership.tickets_remaining < plan.ticket_allowance:
-            membership.tickets_remaining = plan.ticket_allowance
-            membership.is_active = True
-            membership.valid_until = timezone.now().date() + timedelta(days=365)
-            membership.save()
-        return membership
 
     def _ensure_demo_session(self, teacher, offering, external_id, start, end, *, class_topic=None, **extra):
         title = session_display_title(offering, class_topic)
@@ -155,17 +154,46 @@ class Command(BaseCommand):
         for student in students:
             self._ensure_booking(student, session)
 
+    def _reset_demo_seed(self):
+        deleted, _ = User.objects.filter(username__in=self.DEMO_USERNAMES).delete()
+        CurriculumItem.objects.filter(title='Welcome to the studio').delete()
+        Message.objects.filter(subject='Welcome').delete()
+        self.stdout.write(f'Removed demo seed data ({deleted} related rows).')
+
+    def _ensure_owner_teacher(self):
+        user, created = User.objects.get_or_create(
+            username='gnogonzalez',
+            defaults={'email': 'gnogonzalez@gmail.com'},
+        )
+        user.email = 'gnogonzalez@gmail.com'
+        if created:
+            user.set_password('demo1234')
+        user.save()
+        user.groups.add(Group.objects.get(name='teacher'))
+        ensure_default_permissions(user)
+        return user, created
+
     def handle(self, *args, **options):
         for name in ('student', 'teacher', 'staff'):
             Group.objects.get_or_create(name=name)
             self.stdout.write(f'Group ready: {name}')
 
         if not options['demo']:
+            owner, created = self._ensure_owner_teacher()
+            if created:
+                self.stdout.write('  gnogonzalez / demo1234  (teacher)')
+            else:
+                self.stdout.write('  gnogonzalez@gmail.com — teacher role ensured')
             self.stdout.write(self.style.SUCCESS('Groups ready. Pass --demo to seed sample data.'))
+            ensure_default_catalog()
             return
+
+        if options['reset']:
+            self._reset_demo_seed()
 
         ensure_default_score_dimensions()
         ensure_default_glossary()
+        ensure_default_catalog()
 
         staff_user, _ = User.objects.get_or_create(
             username='demo_staff',
@@ -192,9 +220,9 @@ class Command(BaseCommand):
         student_2 = self._ensure_demo_student('demo_student_2', 'alex@example.com')
         student_3 = self._ensure_demo_student('demo_student_3', 'sam@example.com')
         student_4 = self._ensure_demo_student('demo_student_4', 'jordan@example.com')
-
-        if not Membership.objects.filter(user=student).exists():
-            pass  # granted after catalog + plans below
+        demo_students = (student, student_2, student_3, student_4)
+        # No pre-granted membership — students purchase via mock checkout or Stripe in dev.
+        Membership.objects.filter(user__in=demo_students).delete()
 
         # Teacher class catalog — session titles come from this list.
         catalog = {
@@ -244,7 +272,7 @@ class Command(BaseCommand):
         }
 
         all_offerings = list(catalog.values())
-        japanese_plan = self._ensure_subject_plan(
+        self._ensure_subject_plan(
             'Japanese',
             'Japanese',
             all_offerings,
@@ -282,10 +310,6 @@ class Command(BaseCommand):
         )
         MembershipPlan.objects.filter(name__in=('Basic', 'Premium')).update(is_active=False)
 
-        self._grant_membership(student, japanese_plan)
-        for extra_student in (student_2, student_3, student_4):
-            self._grant_membership(extra_student, japanese_plan)
-
         for weekday, start, end in ((0, '09:00', '12:00'), (2, '14:00', '17:00'), (4, '10:00', '13:00')):
             AvailabilityBlock.objects.get_or_create(
                 teacher=teacher,
@@ -316,21 +340,21 @@ class Command(BaseCommand):
                 'demo_report_upcoming',
                 catalog['pronunciation'],
                 now + timedelta(days=2, hours=3),
-                [student, student_2, student_4],
+                [student_2, student_4],
                 None,
             ),
             (
                 'demo_report_group',
                 catalog['daily_routines'],
                 now + timedelta(days=5),
-                [student, student_2, student_3, student_4],
+                [student_2, student_3, student_4],
                 None,
             ),
             (
                 'demo_multi_ensemble',
                 catalog['formal_email'],
                 now + timedelta(days=9, hours=1),
-                [student, student_2, student_3, student_4],
+                [student_2, student_3, student_4],
                 None,
             ),
         ]
@@ -350,7 +374,16 @@ class Command(BaseCommand):
             now + timedelta(days=7, hours=3),
             capacity=6,
         )
-        self._book_students(intro, [student, student_2, student_3])
+        self._book_students(intro, [student_2, student_3])
+
+        # Past demo bookings stay for progress charts; leave upcoming slots for demo_student to book.
+        removed, _ = Booking.objects.filter(
+            student=student,
+            session__start_time__gte=now,
+            status='confirmed',
+        ).delete()
+        if removed:
+            self.stdout.write(f'  Cleared {removed} upcoming demo_student booking(s) for open calendar.')
 
         self._ensure_demo_session(
             teacher,
@@ -485,4 +518,9 @@ class Command(BaseCommand):
         self.stdout.write('  demo_student / demo1234')
         self.stdout.write('  demo_student_2, demo_student_3, demo_student_4 / demo1234')
         self.stdout.write('  demo_staff / demo1234  (Django admin at /admin/)')
-        self.stdout.write('  7 Japanese + 4 English classes; subject-specific membership plans.')
+        owner, owner_created = self._ensure_owner_teacher()
+        if owner_created:
+            self.stdout.write('  gnogonzalez / demo1234  (teacher)')
+        else:
+            self.stdout.write('  gnogonzalez@gmail.com — teacher role ensured')
+        self.stdout.write('  7 Japanese + 4 English classes; membership plans (students start without one).')

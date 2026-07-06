@@ -6,7 +6,7 @@ from django.views.decorators.http import require_POST
 from scheduling.forms import AvailabilityBlockForm, SessionForm, SpecialAvailabilityForm
 from scheduling.models import AvailabilityBlock, Session, SpecialAvailability
 from scheduling.services.availability import session_within_availability
-from scheduling.services.meetings import create_meeting_link
+from scheduling.services.meetings import attach_meeting_link
 from scheduling.services.sessions import apply_session_defaults
 from scheduling.views.common import require_group
 
@@ -30,8 +30,7 @@ def teacher_create_session(request):
             else:
                 session.save()
                 if session.meeting_provider != 'none' and not session.meeting_url:
-                    session.meeting_url = create_meeting_link(session)
-                    session.save(update_fields=['meeting_url'])
+                    attach_meeting_link(session)
                 messages.success(request, 'Session created.')
                 return redirect('teacher_session_list')
     else:

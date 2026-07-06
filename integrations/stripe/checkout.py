@@ -5,6 +5,11 @@ from django.conf import settings
 from integrations.stripe.client import stripe_api_request, stripe_enabled
 
 
+def append_query_param(url, key, value):
+    separator = '&' if '?' in url else '?'
+    return f'{url}{separator}{key}={value}'
+
+
 def frontend_checkout_urls():
     origins = getattr(settings, 'CORS_ALLOWED_ORIGINS', []) or []
     base = (origins[0] if origins else 'http://127.0.0.1:5173').rstrip('/')
@@ -46,6 +51,8 @@ def create_checkout_session(
         months=months,
         membership_id=membership_id,
     )
+
+    success_url = append_query_param(success_url, 'payment_id', payment.id)
 
     payload = {
         'mode': 'payment',

@@ -48,6 +48,12 @@ export default function StaffDashboardPage() {
       </div>
 
       <div className="card">
+        <div className="card-title">Class roadmap</div>
+        <p className="card-meta">Subjects, levels, focuses, and topics teachers pick when creating {labels('class').toLowerCase()}.</p>
+        <Link to="/staff/class-catalog" className="btn secondary">Manage roadmap</Link>
+      </div>
+
+      <div className="card">
         <div className="card-title">Create {label('class').toLowerCase()}</div>
         <p className="card-meta">Add a teachable {label('class').toLowerCase()} to any {label('teacher').toLowerCase()}&apos;s catalog.</p>
         <Link to="/staff/classes/new" className="btn">Create {label('class').toLowerCase()}</Link>

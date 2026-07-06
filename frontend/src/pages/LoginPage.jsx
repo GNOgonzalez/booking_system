@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useBranding } from '../hooks/useBranding.jsx'
 
 export default function LoginPage({ onLogin }) {
   const { branding } = useBranding()
-  const [username, setUsername] = useState('demo_student')
-  const [password, setPassword] = useState('demo1234')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -44,6 +45,9 @@ export default function LoginPage({ onLogin }) {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+        <p className="auth-footer">
+          New here? <Link to="/register">Create a student account</Link>
+        </p>
         <p className="auth-hint">Demo: demo_student / demo_teacher · demo1234</p>
       </div>
     </div>

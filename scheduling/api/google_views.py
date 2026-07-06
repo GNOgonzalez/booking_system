@@ -13,17 +13,30 @@ from integrations.google.oauth import (
     connection_status,
     disconnect,
     exchange_code,
+    parse_oauth_state,
     store_credential,
-    user_id_from_state,
 )
 from scheduling.api.permissions import IsTeacherOrStaff
 
 User = get_user_model()
 
 
-def _frontend_profile_url(result):
-    origins = getattr(settings, 'CORS_ALLOWED_ORIGINS', []) or []
-    base = (origins[0] if origins else 'http://127.0.0.1:5173').rstrip('/')
+def _allowed_frontend_origin(origin):
+    if not origin:
+        return None
+    normalized = origin.rstrip('/')
+    allowed = {
+        item.rstrip('/')
+        for item in (getattr(settings, 'CORS_ALLOWED_ORIGINS', []) or [])
+    }
+    return normalized if normalized in allowed else None
+
+
+def _frontend_profile_url(result, frontend_origin=None):
+    base = _allowed_frontend_origin(frontend_origin)
+    if not base:
+        origins = getattr(settings, 'CORS_ALLOWED_ORIGINS', []) or []
+        base = (origins[0] if origins else 'http://127.0.0.1:5173').rstrip('/')
     return f'{base}/profile?google={result}'
 
 
@@ -33,8 +46,9 @@ class GoogleConnectView(APIView):
     permission_classes = [IsTeacherOrStaff]
 
     def get(self, request):
+        frontend_origin = request.GET.get('frontend_origin', '')
         try:
-            url = build_authorization_url(request.user)
+            url = build_authorization_url(request.user, frontend_origin)
         except GoogleOAuthError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'authorization_url': url})
@@ -58,22 +72,29 @@ class GoogleDisconnectView(APIView):
 def google_oauth_callback(request):
     """Browser redirect from Google — no JWT; user identified via signed state."""
     error = request.GET.get('error')
+    state = request.GET.get('state', '')
+    frontend_origin = ''
+    if state:
+        try:
+            _, frontend_origin = parse_oauth_state(state)
+        except GoogleOAuthError:
+            pass
+
     if error:
-        return HttpResponseRedirect(_frontend_profile_url('denied'))
+        return HttpResponseRedirect(_frontend_profile_url('denied', frontend_origin))
 
     code = request.GET.get('code', '')
-    state = request.GET.get('state', '')
     if not code or not state:
-        return HttpResponseRedirect(_frontend_profile_url('error'))
+        return HttpResponseRedirect(_frontend_profile_url('error', frontend_origin))
 
     try:
-        user_id = user_id_from_state(state)
+        user_id, frontend_origin = parse_oauth_state(state)
         user = User.objects.filter(pk=user_id, is_active=True).first()
         if user is None:
             raise GoogleOAuthError('Unknown user.')
         token_data = exchange_code(code)
         store_credential(user, token_data)
     except GoogleOAuthError:
-        return HttpResponseRedirect(_frontend_profile_url('error'))
+        return HttpResponseRedirect(_frontend_profile_url('error', frontend_origin))
 
-    return HttpResponseRedirect(_frontend_profile_url('connected'))
+    return HttpResponseRedirect(_frontend_profile_url('connected', frontend_origin))

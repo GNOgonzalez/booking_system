@@ -38,8 +38,17 @@ export default function TeacherClassRequestsPage() {
         setRequests(rows)
         const next = {}
         rows.forEach((item) => {
+          const matchingClass = item.open_to_any_teacher && !item.class_offering
+            ? classes.find((row) => (
+              row.subject === item.subject
+              && row.level === item.level
+              && row.focus === item.focus
+            ))
+            : null
           next[item.id] = {
-            classOffering: String(item.class_offering),
+            classOffering: item.class_offering
+              ? String(item.class_offering)
+              : (matchingClass ? String(matchingClass.id) : ''),
             classTopic: item.class_topic ? String(item.class_topic) : '',
             start: toLocalInputValue(item.start_time),
             end: toLocalInputValue(item.end_time),
@@ -156,6 +165,9 @@ export default function TeacherClassRequestsPage() {
             <div className="card-title">{item.student_name}</div>
             <div className="card-meta">
               Requested {formatWhen(item.created_at)} · {item.tickets_requested} ticket{item.tickets_requested === 1 ? '' : 's'}
+              {item.open_to_any_teacher && !item.teacher && (
+                <> · Open to any teacher ({item.class_profile_label})</>
+              )}
             </div>
 
             <div className="field">
@@ -220,14 +232,18 @@ export default function TeacherClassRequestsPage() {
                 {busy ? 'Saving…' : 'Save edits'}
               </button>
               <button type="button" className="secondary" disabled={busy} onClick={() => approve(item.id)}>
-                Approve
+                {item.open_to_any_teacher && !item.teacher ? 'Accept request' : 'Approve'}
               </button>
-              <button type="button" className="ghost" disabled={busy} onClick={() => deny(item.id)}>
-                Deny
-              </button>
-              <button type="button" className="ghost" disabled={busy} onClick={() => remove(item.id)}>
-                Delete
-              </button>
+              {!(item.open_to_any_teacher && !item.teacher) && (
+                <>
+                  <button type="button" className="ghost" disabled={busy} onClick={() => deny(item.id)}>
+                    Deny
+                  </button>
+                  <button type="button" className="ghost" disabled={busy} onClick={() => remove(item.id)}>
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )

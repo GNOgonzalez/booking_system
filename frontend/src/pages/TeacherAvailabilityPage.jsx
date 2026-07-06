@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiFetch } from '../api.js'
 import { useTeacherScope } from '../hooks/useTeacherScope.js'
 import { useTeacherPermissions } from '../hooks/useTeacherPermissions.js'
+import { timezoneLabel } from '../utils/datetime.js'
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -140,7 +141,7 @@ export default function TeacherAvailabilityPage() {
     <div>
       {!isStaff && <h1>Availability</h1>}
       <p className="page-intro">
-        Set weekly windows and one-off special days. Sessions must fit a block when any are defined.
+        Set weekly windows and one-off special days ({timezoneLabel()}). Sessions must fit a block when any are defined.
       </p>
       {error && <div className="error">{error}</div>}
 

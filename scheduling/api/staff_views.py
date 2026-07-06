@@ -2,6 +2,7 @@
 
 from django.contrib.auth import get_user_model
 from rest_framework import generics, status
+from rest_framework.fields import DateTimeField
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -26,7 +27,11 @@ from scheduling.models import (
     Session,
     SpecialAvailability,
 )
-from scheduling.services.availability import session_within_availability
+from scheduling.services.availability import (
+    request_wants_special_availability,
+    resolve_session_availability,
+    session_within_availability,
+)
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.reports import staff_reports
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
@@ -107,15 +112,54 @@ class StaffTeacherSessionListCreateView(StaffTeacherMixin, generics.ListCreateAP
         serializer.is_valid(raise_exception=True)
         start = serializer.validated_data['start_time']
         end = serializer.validated_data['end_time']
-        if not session_within_availability(teacher, start, end):
+        ok, detail = resolve_session_availability(
+            teacher,
+            start,
+            end,
+            acting_user=request.user,
+            add_special=request_wants_special_availability(request),
+            special_note=(request.data.get('special_availability_note') or '').strip(),
+            staff_message=True,
+        )
+        if not ok:
             return Response(
-                {'detail': 'Session time is outside teacher availability.'},
+                {'detail': detail, 'code': 'outside_availability'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         session = serializer.save(teacher=teacher, status='open')
         session.meeting_url = create_meeting_link(session)
         session.save(update_fields=['meeting_url'])
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class StaffTeacherSessionAvailabilityCheckView(StaffTeacherMixin, APIView):
+    def get(self, request, teacher_id):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        start_raw = request.query_params.get('start_time')
+        end_raw = request.query_params.get('end_time')
+        if not start_raw or not end_raw:
+            return Response(
+                {'detail': 'start_time and end_time are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        field = DateTimeField()
+        try:
+            start = field.to_internal_value(start_raw)
+            end = field.to_internal_value(end_raw)
+        except Exception:
+            return Response(
+                {'detail': 'Invalid start_time or end_time.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if end <= start:
+            return Response(
+                {'detail': 'end_time must be after start_time.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        available = session_within_availability(teacher, start, end)
+        return Response({'available': available})
 
 
 class StaffTeacherSessionDetailView(StaffTeacherMixin, APIView):
@@ -299,6 +343,25 @@ class StaffTeacherSpecialAvailabilityListCreateView(StaffTeacherMixin, generics.
 
     def perform_create(self, serializer):
         serializer.save(teacher=self.get_teacher())
+
+
+class StaffTeacherSchedulingSlotsView(StaffTeacherMixin, APIView):
+    def get(self, request, teacher_id):
+        from scheduling.services.scheduling_slots import scheduling_slot_options
+
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        days = min(int(request.query_params.get('days', 28)), 90)
+        duration = min(max(int(request.query_params.get('duration_minutes', 60)), 15), 240)
+        step = min(max(int(request.query_params.get('step_minutes', 30)), 15), 120)
+        slots = scheduling_slot_options(
+            teacher,
+            days=days,
+            duration_minutes=duration,
+            step_minutes=step,
+        )
+        return Response({'slots': slots})
 
 
 class StaffTeacherSpecialAvailabilityUpdateDeleteView(StaffTeacherMixin, generics.RetrieveUpdateDestroyAPIView):

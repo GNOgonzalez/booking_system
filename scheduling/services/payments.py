@@ -104,11 +104,27 @@ def _grant_ticket_pack(user, plan, months=1, membership_id=None):
     return membership, None
 
 
+def get_payment_status(user, payment_id):
+    """Return payment status for the student who owns it, or (None, error)."""
+    payment = (
+        Payment.objects.filter(pk=payment_id, user=user)
+        .select_related('plan')
+        .first()
+    )
+    if payment is None:
+        return None, 'Payment not found.'
+    return {
+        'id': payment.id,
+        'status': payment.status,
+        'plan_name': payment.plan.name,
+    }, None
+
+
 def fulfill_payment(payment_id, *, stripe_checkout_session_id='', stripe_payment_intent_id=''):
     """Complete a pending Stripe payment and activate the membership."""
     payment = (
         Payment.objects.select_for_update()
-        .select_related('user', 'plan', 'membership')
+        .select_related('user', 'plan')
         .filter(pk=payment_id)
         .first()
     )

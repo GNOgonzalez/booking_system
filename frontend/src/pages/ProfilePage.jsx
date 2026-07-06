@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { apiFetch, changePassword, getMe, updateMe } from '../api.js'
 import { applyTheme } from '../hooks/useTheme.js'
+import { browserTimezone } from '../utils/datetime.js'
 
 function GoogleCalendarCard() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -26,6 +27,7 @@ function GoogleCalendarCard() {
     else setError('Google connection failed. Try again.')
     searchParams.delete('google')
     setSearchParams(searchParams, { replace: true })
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -33,7 +35,8 @@ function GoogleCalendarCard() {
     setBusy(true)
     setError('')
     try {
-      const data = await apiFetch('/api/integrations/google/connect/')
+      const origin = encodeURIComponent(window.location.origin)
+      const data = await apiFetch(`/api/integrations/google/connect/?frontend_origin=${origin}`)
       window.location.assign(data.authorization_url)
     } catch (err) {
       setError(err.message)
@@ -121,7 +124,7 @@ export default function ProfilePage({ onSaved }) {
           first_name: me.first_name || '',
           last_name: me.last_name || '',
           email: me.email || '',
-          timezone: me.timezone || 'UTC',
+          timezone: me.timezone || browserTimezone(),
           theme: me.theme || 'system',
         })
       })
@@ -195,7 +198,8 @@ export default function ProfilePage({ onSaved }) {
           </div>
           <div className="field">
             <label>Timezone</label>
-            <input value={form.timezone} onChange={onField('timezone')} placeholder="e.g. UTC, America/New_York" />
+            <input value={form.timezone} onChange={onField('timezone')} placeholder={browserTimezone()} />
+            <p className="card-meta">Detected from your browser on login. Used for availability and scheduling.</p>
           </div>
           <div className="field">
             <label>Theme</label>

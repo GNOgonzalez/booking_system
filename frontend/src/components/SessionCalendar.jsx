@@ -216,6 +216,7 @@ export default function SessionCalendar({
                   className={[
                     'calendar-day-list-item',
                     activeSession?.id === session.id ? 'calendar-day-list-item--active' : '',
+                    session.student_booked ? 'calendar-day-list-item--booked' : '',
                   ].filter(Boolean).join(' ')}
                   onClick={() => setActiveSession(session)}
                 >
@@ -225,6 +226,9 @@ export default function SessionCalendar({
                       <span className="calendar-day-list-teacher">{session.teacher_name} · </span>
                     )}
                     {session.title}
+                    {session.student_booked && (
+                      <span className="calendar-day-list-booked"> · Booked</span>
+                    )}
                   </span>
                 </button>
               ))

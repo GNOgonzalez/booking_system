@@ -1,8 +1,12 @@
 from django.urls import path
 
 from progress.api.history import TeacherSessionHistoryPrivacyView, TeacherStudentHistoryView
-from scheduling.api import blog_views, branding_views, class_request_views, google_views, staff_views, views
-from scheduling.api.auth_views import ThrottledTokenObtainPairView, ThrottledTokenRefreshView
+from scheduling.api import blog_views, branding_views, class_catalog_views, class_request_views, google_views, staff_views, views
+from scheduling.api.auth_views import (
+    StudentRegisterView,
+    ThrottledTokenObtainPairView,
+    ThrottledTokenRefreshView,
+)
 from scheduling.api.glossary_views import GlossaryListView, StaffGlossaryView
 from scheduling.api.llm_views import (
     StaffLLMConfigView,
@@ -14,10 +18,12 @@ from scheduling.api.llm_views import (
 urlpatterns = [
     path('auth/token/', ThrottledTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/token/refresh/', ThrottledTokenRefreshView.as_view(), name='token_refresh'),
+    path('auth/register/', StudentRegisterView.as_view(), name='student_register'),
     path('me/', views.MeView.as_view(), name='api_me'),
     path('me/onboarding/', views.MeOnboardingView.as_view(), name='api_me_onboarding'),
     path('markdown/preview/', views.MarkdownPreviewView.as_view(), name='api_markdown_preview'),
     path('glossary/', GlossaryListView.as_view(), name='api_glossary'),
+    path('class-catalog/', class_catalog_views.ClassCatalogListView.as_view(), name='api_class_catalog'),
     path('branding/', branding_views.PublicBrandingView.as_view(), name='api_branding'),
     path('upload-limits/', blog_views.UploadLimitsView.as_view(), name='api_upload_limits'),
     path('blog/', blog_views.BlogPostListView.as_view(), name='api_blog_list'),
@@ -29,8 +35,10 @@ urlpatterns = [
     path('bookings/create/', views.BookingCreateView.as_view(), name='api_booking_create'),
     path('bookings/<int:booking_id>/cancel/', views.BookingCancelView.as_view(), name='api_booking_cancel'),
     path('class-requests/teachers/', class_request_views.ClassRequestTeacherListView.as_view(), name='api_class_request_teachers'),
+    path('class-requests/open-classes/', class_request_views.ClassRequestOpenClassesView.as_view(), name='api_class_request_open_classes'),
     path('class-requests/classes/', class_request_views.ClassRequestTeacherClassesView.as_view(), name='api_class_request_classes'),
     path('class-requests/availability/', class_request_views.ClassRequestAvailabilityView.as_view(), name='api_class_request_availability'),
+    path('class-requests/open-availability/', class_request_views.ClassRequestOpenAvailabilityView.as_view(), name='api_class_request_open_availability'),
     path('class-requests/', class_request_views.StudentClassRequestListCreateView.as_view(), name='api_class_requests'),
     path('class-requests/<int:pk>/', class_request_views.StudentClassRequestDetailView.as_view(), name='api_class_request_detail'),
     path('teacher/class-requests/', class_request_views.TeacherClassRequestListView.as_view(), name='api_teacher_class_requests'),
@@ -39,6 +47,11 @@ urlpatterns = [
     path('teacher/class-requests/<int:pk>/deny/', class_request_views.TeacherClassRequestDenyView.as_view(), name='api_teacher_class_request_deny'),
     path('teacher/class-requests/<int:pk>/delete/', class_request_views.TeacherClassRequestDeleteView.as_view(), name='api_teacher_class_request_delete'),
     path('teacher/sessions/', views.TeacherSessionListCreateView.as_view(), name='api_teacher_sessions'),
+    path(
+        'teacher/sessions/availability-check/',
+        views.TeacherSessionAvailabilityCheckView.as_view(),
+        name='api_teacher_session_availability_check',
+    ),
     path(
         'teacher/sessions/<int:session_id>/',
         views.TeacherSessionDetailView.as_view(),
@@ -76,6 +89,11 @@ urlpatterns = [
         views.TeacherSpecialAvailabilityUpdateDeleteView.as_view(),
         name='api_teacher_special_availability_detail',
     ),
+    path(
+        'teacher/scheduling-slots/',
+        views.TeacherSchedulingSlotsView.as_view(),
+        name='api_teacher_scheduling_slots',
+    ),
     path('teacher/classes/', views.TeacherClassOfferingListCreateView.as_view(), name='api_teacher_classes'),
     path(
         'teacher/classes/<int:pk>/',
@@ -89,6 +107,11 @@ urlpatterns = [
     path('membership/plans/', views.MembershipPlanCatalogView.as_view(), name='api_membership_plans'),
     path('membership/payment-config/', views.MembershipPaymentConfigView.as_view(), name='api_membership_payment_config'),
     path('membership/checkout/', views.MembershipCheckoutView.as_view(), name='api_membership_checkout'),
+    path(
+        'membership/payments/<int:payment_id>/',
+        views.MembershipPaymentStatusView.as_view(),
+        name='api_membership_payment_status',
+    ),
     path('payments/stripe/webhook/', views.StripeWebhookView.as_view(), name='api_stripe_webhook'),
     path('integrations/google/connect/', google_views.GoogleConnectView.as_view(), name='api_google_connect'),
     path('integrations/google/status/', google_views.GoogleStatusView.as_view(), name='api_google_status'),
@@ -112,6 +135,11 @@ urlpatterns = [
         'staff/teachers/<int:teacher_id>/sessions/',
         staff_views.StaffTeacherSessionListCreateView.as_view(),
         name='api_staff_teacher_sessions',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/sessions/availability-check/',
+        staff_views.StaffTeacherSessionAvailabilityCheckView.as_view(),
+        name='api_staff_teacher_session_availability_check',
     ),
     path(
         'staff/teachers/<int:teacher_id>/sessions/<int:session_id>/',
@@ -154,6 +182,11 @@ urlpatterns = [
         name='api_staff_teacher_special_availability_detail',
     ),
     path(
+        'staff/teachers/<int:teacher_id>/scheduling-slots/',
+        staff_views.StaffTeacherSchedulingSlotsView.as_view(),
+        name='api_staff_teacher_scheduling_slots',
+    ),
+    path(
         'staff/teachers/<int:teacher_id>/students/',
         staff_views.StaffTeacherStudentListView.as_view(),
         name='api_staff_teacher_students',
@@ -189,6 +222,12 @@ urlpatterns = [
         name='api_staff_teacher_class_request_delete',
     ),
     path('staff/classes/', staff_views.StaffCreateClassView.as_view(), name='api_staff_create_class'),
+    path('staff/class-catalog/', class_catalog_views.StaffClassCatalogView.as_view(), name='api_staff_class_catalog'),
+    path(
+        'staff/class-catalog/focuses/<int:focus_id>/topics/bulk/',
+        class_catalog_views.StaffClassCatalogBulkTopicsView.as_view(),
+        name='api_staff_class_catalog_bulk_topics',
+    ),
     path('staff/class-offerings/', staff_views.StaffClassOfferingListView.as_view(), name='api_staff_class_offerings'),
     path('staff/membership-plans/', staff_views.StaffMembershipPlanListCreateView.as_view(), name='api_staff_membership_plans'),
     path(

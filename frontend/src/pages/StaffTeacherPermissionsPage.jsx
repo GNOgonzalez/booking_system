@@ -5,38 +5,48 @@ import { apiFetch } from '../api.js'
 export default function StaffTeacherPermissionsPage() {
   const { teacherId } = useParams()
   const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [savingKey, setSavingKey] = useState('')
 
   const load = () => {
+    setLoading(true)
+    setError('')
     apiFetch(`/api/staff/teachers/${teacherId}/permissions/`)
-      .then(setItems)
+      .then((rows) => {
+        setItems(rows)
+      })
       .catch((err) => setError(err.message))
+      .finally(() => setLoading(false))
   }
 
   useEffect(load, [teacherId])
 
-  const toggle = (key) => {
-    setItems((rows) => rows.map((r) => (r.key === key ? { ...r, is_enabled: !r.is_enabled } : r)))
+  const savePermissions = async (rows) => {
+    const permissions = Object.fromEntries(rows.map((r) => [r.key, r.is_enabled]))
+    const updated = await apiFetch(`/api/staff/teachers/${teacherId}/permissions/`, {
+      method: 'PATCH',
+      body: JSON.stringify({ permissions }),
+    })
+    setItems(updated)
+    setMessage('Permissions saved.')
   }
 
-  const save = async () => {
-    setSaving(true)
+  const toggle = async (key) => {
+    const previous = items
+    const next = items.map((r) => (r.key === key ? { ...r, is_enabled: !r.is_enabled } : r))
+    setItems(next)
     setError('')
     setMessage('')
+    setSavingKey(key)
     try {
-      const permissions = Object.fromEntries(items.map((r) => [r.key, r.is_enabled]))
-      const updated = await apiFetch(`/api/staff/teachers/${teacherId}/permissions/`, {
-        method: 'PATCH',
-        body: JSON.stringify({ permissions }),
-      })
-      setItems(updated)
-      setMessage('Permissions saved.')
+      await savePermissions(next)
     } catch (err) {
+      setItems(previous)
       setError(err.message)
     } finally {
-      setSaving(false)
+      setSavingKey('')
     }
   }
 
@@ -44,10 +54,17 @@ export default function StaffTeacherPermissionsPage() {
     <div>
       <h2>Permissions</h2>
       <p className="page-intro">
-        Control what this teacher can do in the app. Staff always has full access.
+        Control what this teacher can do in the app. Changes save immediately when you toggle a checkbox.
+        Staff always has full access.
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
+
+      {loading && <p className="page-intro">Loading permissions…</p>}
+
+      {!loading && !items.length && !error && (
+        <p className="empty">No permissions found for this teacher.</p>
+      )}
 
       {items.map((item) => (
         <label key={item.key} className="card permission-row">
@@ -55,19 +72,18 @@ export default function StaffTeacherPermissionsPage() {
             type="checkbox"
             checked={item.is_enabled}
             onChange={() => toggle(item.key)}
+            disabled={Boolean(savingKey)}
           />
           <div>
-            <div className="card-title">{item.label}</div>
+            <div className="card-title">
+              {item.label}
+              {savingKey === item.key && <span className="card-meta"> · Saving…</span>}
+            </div>
             <div className="card-meta">{item.description}</div>
           </div>
         </label>
       ))}
 
-      <div className="form-actions">
-        <button type="button" onClick={save} disabled={saving || !items.length}>
-          {saving ? 'Saving…' : 'Save permissions'}
-        </button>
-      </div>
       <p className="card-meta">
         Disabled teachers can still <Link to="../sessions">view their schedule</Link> but cannot make changes.
       </p>

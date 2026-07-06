@@ -335,6 +335,11 @@ class Session(models.Model):
         default='google_meet',
     )
     meeting_url = models.URLField(blank=True)
+    google_calendar_event_id = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Calendar event backing the Meet link — used to sync updates/cancellations.',
+    )
     external_id = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -405,11 +410,19 @@ class ClassRequest(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='class_requests_received',
+        null=True,
+        blank=True,
     )
+    open_to_any_teacher = models.BooleanField(default=False)
+    subject = models.CharField(max_length=100, blank=True)
+    level = models.CharField(max_length=100, blank=True)
+    focus = models.CharField(max_length=100, blank=True)
     class_offering = models.ForeignKey(
         ClassOffering,
         on_delete=models.PROTECT,
         related_name='class_requests',
+        null=True,
+        blank=True,
     )
     class_topic = models.ForeignKey(
         ClassTopic,
@@ -441,7 +454,15 @@ class ClassRequest(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.student.username} → {self.teacher.username} ({self.status})"
+        teacher_label = self.teacher.username if self.teacher_id else 'any teacher'
+        return f"{self.student.username} → {teacher_label} ({self.status})"
+
+    @property
+    def class_profile_label(self):
+        if self.class_offering_id:
+            return self.class_offering.display_name
+        parts = [self.subject, self.level, self.focus]
+        return ' · '.join(part for part in parts if part)
 
 
 class MembershipPlan(models.Model):
@@ -468,6 +489,11 @@ class MembershipPlan(models.Model):
         help_text='Tickets granted each time a student purchases one billing period.',
     )
     is_active = models.BooleanField(default=True)
+    subject = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='When set, members may book any active class with this subject.',
+    )
     allowed_classes = models.ManyToManyField(
         ClassOffering,
         blank=True,
@@ -484,7 +510,7 @@ class MembershipPlan(models.Model):
 
     @property
     def includes_all_classes(self):
-        return not self.allowed_classes.all()
+        return not self.subject and not self.allowed_classes.all()
 
 
 class Membership(models.Model):
@@ -635,6 +661,96 @@ class GoogleCredential(models.Model):
 
     def __str__(self):
         return f'Google credential for {self.user.username}'
+
+
+class CatalogSubject(models.Model):
+    """Studio-wide subject for class roadmaps (e.g. Japanese, English)."""
+
+    name = models.CharField(max_length=100, unique=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class CatalogLevel(models.Model):
+    """Proficiency level within a subject."""
+
+    subject = models.ForeignKey(
+        CatalogSubject,
+        on_delete=models.CASCADE,
+        related_name='levels',
+    )
+    name = models.CharField(max_length=100)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['subject', 'name'],
+                name='unique_catalog_level_per_subject',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.subject.name} · {self.name}'
+
+
+class CatalogFocus(models.Model):
+    """Skill or strand within a level (e.g. Grammar, Speaking)."""
+
+    level = models.ForeignKey(
+        CatalogLevel,
+        on_delete=models.CASCADE,
+        related_name='focuses',
+    )
+    name = models.CharField(max_length=150)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name_plural = 'catalog focuses'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['level', 'name'],
+                name='unique_catalog_focus_per_level',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.level} · {self.name}'
+
+
+class CatalogTopic(models.Model):
+    """Ordered roadmap topic within a focus."""
+
+    focus = models.ForeignKey(
+        CatalogFocus,
+        on_delete=models.CASCADE,
+        related_name='topics',
+    )
+    title = models.CharField(max_length=150)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['sort_order', 'title']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['focus', 'title'],
+                name='unique_catalog_topic_per_focus',
+            ),
+        ]
+
+    def __str__(self):
+        return self.title
 
 
 class CurriculumItem(models.Model):

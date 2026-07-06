@@ -17,6 +17,8 @@ function formatDuration(startIso, endIso) {
   return m ? `${h} hr ${m} min` : `${h} hour${h > 1 ? 's' : ''}`
 }
 
+import { useEffect, useState } from 'react'
+
 function ticketsForSession(session, memberships) {
   if (!session?.class_offering || !memberships?.length) return null
   for (const membership of memberships) {
@@ -49,10 +51,30 @@ export default function StudentOpenSessionPanel({
 
   const spotsLeft = Math.max(session.capacity - session.confirmed_count, 0)
   const full = spotsLeft <= 0
+  const alreadyBooked = Boolean(session.student_booked)
   const ticketCost = session.ticket_cost ?? 1
   const subjectTickets = ticketsForSession(session, memberships)
   const applicableTickets = subjectTickets ?? ticketsRemaining
   const insufficientTickets = applicableTickets != null && applicableTickets < ticketCost
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  useEffect(() => {
+    setConfirmOpen(false)
+  }, [session?.id])
+
+  useEffect(() => {
+    if (!confirmOpen) return undefined
+    const onKey = (event) => {
+      if (event.key === 'Escape') setConfirmOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirmOpen])
+
+  const handleConfirm = () => {
+    setConfirmOpen(false)
+    onBook?.(session.id)
+  }
 
   return (
     <aside className="session-panel card">
@@ -63,6 +85,8 @@ export default function StudentOpenSessionPanel({
             {session.teacher_name && <span className="badge">{session.teacher_name}</span>}
             {full ? (
               <span className="badge badge--muted">Full</span>
+            ) : alreadyBooked ? (
+              <span className="badge">Booked</span>
             ) : (
               <span className="badge">{spotsLeft} spot{spotsLeft === 1 ? '' : 's'} left</span>
             )}
@@ -137,18 +161,61 @@ export default function StudentOpenSessionPanel({
       <div className="form-actions">
         <button
           type="button"
-          onClick={() => onBook?.(session.id)}
-          disabled={booking || full || insufficientTickets}
+          onClick={() => setConfirmOpen(true)}
+          disabled={booking || full || insufficientTickets || alreadyBooked}
         >
           {booking
             ? 'Booking…'
-            : full
-              ? 'Session full'
-              : insufficientTickets
-                ? 'Not enough tickets'
-                : `Book (${ticketCost} ticket${ticketCost === 1 ? '' : 's'})`}
+            : alreadyBooked
+              ? 'Already booked'
+              : full
+                ? 'Session full'
+                : insufficientTickets
+                  ? 'Not enough tickets'
+                  : `Book (${ticketCost} ticket${ticketCost === 1 ? '' : 's'})`}
         </button>
       </div>
+
+      {confirmOpen && (
+        <>
+          <button
+            type="button"
+            className="modal-backdrop"
+            aria-label="Cancel booking"
+            onClick={() => setConfirmOpen(false)}
+            disabled={booking}
+          />
+          <div
+            className="modal-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="booking-confirm-title"
+          >
+            <h2 id="booking-confirm-title">Confirm booking</h2>
+            <p>
+              Book <strong>{session.title}</strong>
+              {session.teacher_name && <> with {session.teacher_name}</>}?
+            </p>
+            <p>
+              Starts {formatDateTime(session.start_time)}.
+              {' '}This will use {ticketCost} ticket{ticketCost === 1 ? '' : 's'}.
+            </p>
+            <div className="form-actions">
+              <button type="button" onClick={handleConfirm} disabled={booking}>
+                {booking ? 'Booking…' : 'Confirm booking'}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setConfirmOpen(false)}
+                disabled={booking}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </aside>
   )
 }

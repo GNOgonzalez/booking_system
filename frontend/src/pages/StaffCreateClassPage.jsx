@@ -2,22 +2,16 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import { useGlossary } from '../hooks/useGlossary.jsx'
+import ClassCatalogPicker, {
+  catalogSelectionToTopics,
+  EMPTY_CATALOG_SELECTION,
+} from '../components/ClassCatalogPicker.jsx'
 
 const EMPTY = {
   teacher: '',
-  subject: '',
-  level: '',
-  focus: '',
-  topics: [''],
-  topics_ordered: false,
+  catalog: { ...EMPTY_CATALOG_SELECTION },
   default_capacity: 4,
   ticket_cost: 1,
-}
-
-function topicsPayload(topics) {
-  return topics
-    .map((title, index) => ({ title: title.trim(), sort_order: index }))
-    .filter((topic) => topic.title)
 }
 
 export default function StaffCreateClassPage() {
@@ -34,11 +28,6 @@ export default function StaffCreateClassPage() {
   }, [])
 
   const onField = (key) => (e) => setForm({ ...form, [key]: e.target.value })
-  const onCheckbox = (key) => (e) => setForm({ ...form, [key]: e.target.checked })
-
-  const setTopicAt = (topics, index, value) => topics.map((item, i) => (i === index ? value : item))
-  const addTopicRow = (topics) => [...topics, '']
-  const removeTopicRow = (topics, index) => (topics.length <= 1 ? [''] : topics.filter((_, i) => i !== index))
 
   const submit = async (e) => {
     e.preventDefault()
@@ -48,9 +37,14 @@ export default function StaffCreateClassPage() {
       setError('Choose a teacher.')
       return
     }
-    const topics = topicsPayload(form.topics)
+    const { catalog } = form
+    const topics = catalogSelectionToTopics(catalog.topicTitles)
+    if (!catalog.subject || !catalog.level || !catalog.focus) {
+      setError('Choose subject, level, and focus.')
+      return
+    }
     if (!topics.length) {
-      setError('Add at least one topic.')
+      setError('Select at least one topic.')
       return
     }
     try {
@@ -58,10 +52,10 @@ export default function StaffCreateClassPage() {
         method: 'POST',
         body: JSON.stringify({
           teacher: Number(form.teacher),
-          subject: form.subject,
-          level: form.level,
-          focus: form.focus,
-          topics_ordered: form.topics_ordered,
+          subject: catalog.subject,
+          level: catalog.level,
+          focus: catalog.focus,
+          topics_ordered: catalog.topics_ordered,
           topics,
           default_capacity: Number(form.default_capacity),
           ticket_cost: Number(form.ticket_cost) || 1,
@@ -81,7 +75,9 @@ export default function StaffCreateClassPage() {
       <p className="card-meta"><Link to="/staff">← Staff dashboard</Link></p>
       <h1>Create {label('class').toLowerCase()}</h1>
       <p className="page-intro">
-        Add a teachable {label('class').toLowerCase()} to any {label('teacher').toLowerCase()}&apos;s catalog — staff can always create {labels('class').toLowerCase()} regardless of {label('teacher').toLowerCase()} permissions.
+        Add a teachable {label('class').toLowerCase()} to any {label('teacher').toLowerCase()}&apos;s catalog.
+        Pick from the studio roadmap, or{' '}
+        <Link to="/staff/class-catalog">edit subjects, levels, and topics</Link>.
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
@@ -96,54 +92,11 @@ export default function StaffCreateClassPage() {
             ))}
           </select>
         </div>
-        <div className="row">
-          <div className="field grow">
-            <label>Subject</label>
-            <input value={form.subject} onChange={onField('subject')} placeholder="Japanese" required />
-          </div>
-          <div className="field grow">
-            <label>Level</label>
-            <input value={form.level} onChange={onField('level')} placeholder="Beginner" required />
-          </div>
-        </div>
-        <div className="field">
-          <label>Focus</label>
-          <input value={form.focus} onChange={onField('focus')} placeholder="Grammar and Vocabulary" required />
-        </div>
-        <div className="field">
-          <label>Topics</label>
-          {form.topics.map((topic, index) => (
-            <div key={index} className="row" style={{ marginBottom: '0.5rem' }}>
-              <input
-                className="grow"
-                value={topic}
-                onChange={(e) => setForm({ ...form, topics: setTopicAt(form.topics, index, e.target.value) })}
-                placeholder={index === 0 ? 'Present Tense Verbs' : 'Another topic'}
-                required={index === 0}
-              />
-              {form.topics.length > 1 && (
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => setForm({ ...form, topics: removeTopicRow(form.topics, index) })}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setForm({ ...form, topics: addTopicRow(form.topics) })}
-          >
-            Add topic
-          </button>
-        </div>
-        <label className="checkbox-row">
-          <input type="checkbox" checked={form.topics_ordered} onChange={onCheckbox('topics_ordered')} />
-          Teach topics in order
-        </label>
+        <ClassCatalogPicker
+          value={form.catalog}
+          onChange={(catalog) => setForm({ ...form, catalog })}
+          showStaffCatalogLink
+        />
         <div className="row">
           <div className="field" style={{ maxWidth: '8rem' }}>
             <label>Default capacity</label>

@@ -1,7 +1,7 @@
 from django.db.models import Q
 from django.utils import timezone
 
-from scheduling.models import Membership
+from scheduling.models import ClassOffering, Membership
 
 
 def _active_qs(user):
@@ -34,8 +34,12 @@ def _membership_allows_class(membership, class_offering):
     if class_offering is None:
         return True
     plan = membership.plan
-    if not plan.allowed_classes.all():
+    if plan.includes_all_classes:
         return True
+    if plan.subject and class_offering.subject == plan.subject and class_offering.is_active:
+        return True
+    if not plan.allowed_classes.all():
+        return False
     return plan.allowed_classes.filter(pk=class_offering.pk, is_active=True).exists()
 
 
@@ -72,13 +76,25 @@ def allowed_class_ids_for_user(user):
     if not memberships:
         return set()
     allowed_ids = set()
+    subjects = set()
     unrestricted = False
     for membership in memberships:
-        classes = list(membership.plan.allowed_classes.all())
-        if not classes:
+        plan = membership.plan
+        if plan.includes_all_classes:
             unrestricted = True
-        else:
-            allowed_ids.update(c.pk for c in classes)
+            break
+        if plan.subject:
+            subjects.add(plan.subject)
+        allowed_ids.update(
+            plan.allowed_classes.filter(is_active=True).values_list('pk', flat=True),
+        )
     if unrestricted:
         return None
+    if subjects:
+        allowed_ids.update(
+            ClassOffering.objects.filter(
+                subject__in=subjects,
+                is_active=True,
+            ).values_list('pk', flat=True),
+        )
     return allowed_ids
