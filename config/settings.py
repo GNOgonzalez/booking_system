@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -24,6 +25,19 @@ def env_bool(name, default=False):
 def env_list(name, default=''):
     raw = os.environ.get(name, default)
     return [item.strip() for item in raw.split(',') if item.strip()]
+
+
+def _database_from_url(url):
+    """Parse postgres:// or postgresql:// URL (Render DATABASE_URL)."""
+    parsed = urlparse(url)
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': parsed.path.lstrip('/') or '',
+        'USER': parsed.username or '',
+        'PASSWORD': parsed.password or '',
+        'HOST': parsed.hostname or '',
+        'PORT': str(parsed.port or 5432),
+    }
 
 
 # Core
@@ -95,6 +109,8 @@ if RUNNING_TESTS:
             'NAME': BASE_DIR / 'test_db.sqlite3',
         }
     }
+elif os.environ.get('DATABASE_URL'):
+    DATABASES = {'default': _database_from_url(os.environ['DATABASE_URL'])}
 else:
     DATABASES = {
         'default': {

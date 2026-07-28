@@ -44,6 +44,12 @@ services:
         sync: false
       - key: ALLOW_MOCK_PAYMENTS
         value: "true"
+      - key: SECURE_SSL_REDIRECT
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: booking-db
+          property: connectionString
 
   - type: cron
     name: booking-demo-reset
@@ -79,3 +85,7 @@ services:
         fromDatabase:
           name: booking-db
           property: port
+      - key: DATABASE_URL
+        fromDatabase:
+          name: booking-db
+          property: connectionString
