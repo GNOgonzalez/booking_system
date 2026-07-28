@@ -15,4 +15,5 @@ RUN python manage.py collectstatic --noinput || true
 EXPOSE 8000
 
 # Render sets PORT (often 10000); default 8000 for local docker compose.
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000}"]
+# SEED_DEMO=true runs bootstrap_sandbox --demo after migrate (free tier has no Shell).
+CMD ["sh", "-c", "python manage.py migrate --noinput && if [ \"$SEED_DEMO\" = \"true\" ]; then python manage.py bootstrap_sandbox --demo; fi && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000}"]

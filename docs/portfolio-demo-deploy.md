@@ -41,13 +41,13 @@ git push origin main
 
 ### Seed demo data (once)
 
-**booking-api** → **Shell**:
+Render **free tier has no Shell**. Demo users are seeded automatically when `SEED_DEMO=true` (set in `render.yaml` / Dockerfile startup). After deploy, log in as `demo_student` / `demo1234`.
+
+**Manual seed (optional):** from your laptop with the database **External** URL:
 
 ```bash
-python manage.py bootstrap_sandbox --demo
+DATABASE_URL='postgresql://...' python manage.py bootstrap_sandbox --demo
 ```
-
-Log in with `demo_student` / `demo1234` (also `demo_teacher`, `demo_staff`).
 
 ### Smoke test
 
