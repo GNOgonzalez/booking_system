@@ -1,0 +1,81 @@
+# Render Blueprint — booking API + Postgres + nightly demo reset
+
+databases:
+  - name: booking-db
+    plan: free
+    databaseName: booking
+    user: booking_user
+
+services:
+  - type: web
+    name: booking-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/branding/
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: DB_NAME
+        fromDatabase:
+          name: booking-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: booking-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: booking-db
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: booking-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: booking-db
+          property: port
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: ALLOW_MOCK_PAYMENTS
+        value: "true"
+
+  - type: cron
+    name: booking-demo-reset
+    runtime: docker
+    schedule: "0 5 * * *"
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python manage.py bootstrap_sandbox --demo --reset
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: booking-api
+          envVarKey: SECRET_KEY
+      - key: DB_NAME
+        fromDatabase:
+          name: booking-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: booking-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: booking-db
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: booking-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: booking-db
+          property: port
