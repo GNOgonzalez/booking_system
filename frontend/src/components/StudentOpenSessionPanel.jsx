@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+
 function formatDateTime(iso) {
   return new Date(iso).toLocaleString(undefined, {
     weekday: 'long',
@@ -16,8 +19,6 @@ function formatDuration(startIso, endIso) {
   const m = mins % 60
   return m ? `${h} hr ${m} min` : `${h} hour${h > 1 ? 's' : ''}`
 }
-
-import { useEffect, useState } from 'react'
 
 function ticketsForSession(session, memberships) {
   if (!session?.class_offering || !memberships?.length) return null
@@ -159,10 +160,16 @@ export default function StudentOpenSessionPanel({
       </dl>
 
       <div className="form-actions">
+        {insufficientTickets ? (
+          <>
+            <p className="card-meta">Not enough tickets for this session.</p>
+            <Link to="/membership" className="btn">Get more tickets</Link>
+          </>
+        ) : (
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          disabled={booking || full || insufficientTickets || alreadyBooked}
+          disabled={booking || full || alreadyBooked}
         >
           {booking
             ? 'Booking…'
@@ -170,10 +177,9 @@ export default function StudentOpenSessionPanel({
               ? 'Already booked'
               : full
                 ? 'Session full'
-                : insufficientTickets
-                  ? 'Not enough tickets'
-                  : `Book (${ticketCost} ticket${ticketCost === 1 ? '' : 's'})`}
+                : `Book (${ticketCost} ticket${ticketCost === 1 ? '' : 's'})`}
         </button>
+        )}
       </div>
 
       {confirmOpen && (

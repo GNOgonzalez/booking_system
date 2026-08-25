@@ -21,6 +21,8 @@ from .models import (
     Profile,
     Session,
     SpecialAvailability,
+    StaffAlert,
+    StaffAlertRead,
     StudioBranding,
     StudioGlossary,
     StudioLLMConfig,
@@ -51,3 +53,5 @@ admin.site.register(BlogPost)
 admin.site.register(ClassRequest)
 admin.site.register(Message)
 admin.site.register(CurriculumItem)
+admin.site.register(StaffAlert)
+admin.site.register(StaffAlertRead)

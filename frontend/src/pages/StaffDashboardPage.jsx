@@ -3,15 +3,74 @@ import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import { useGlossary } from '../hooks/useGlossary.jsx'
 
+function formatRelativeTime(iso) {
+  if (!iso) return ''
+  const then = new Date(iso).getTime()
+  const diffMs = Date.now() - then
+  const minutes = Math.round(diffMs / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  if (days < 14) return `${days}d ago`
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function AlertSection({ title, emptyLabel, items, seeAllTo }) {
+  return (
+    <div className="card staff-alerts-panel">
+      <div className="card-row">
+        <div className="card-title">{title}</div>
+        {seeAllTo && (
+          <Link to={seeAllTo} className="card-meta">
+            View all
+          </Link>
+        )}
+      </div>
+      {items.length === 0 ? (
+        <p className="card-meta">{emptyLabel}</p>
+      ) : (
+        <ul className="staff-alerts-list">
+          {items.map((alert) => (
+            <li
+              key={alert.id}
+              className={`staff-alert-item${alert.is_unread ? ' staff-alert-item--unread' : ''}`}
+            >
+              <div className="staff-alert-item-main">
+                <span className="staff-alert-title">{alert.title}</span>
+                {alert.is_unread && <span className="badge badge--success">New</span>}
+              </div>
+              {alert.body && <div className="card-meta">{alert.body}</div>}
+              <div className="card-meta">{formatRelativeTime(alert.created_at)}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function StaffDashboardPage() {
   const { label, labels } = useGlossary()
   const [teachers, setTeachers] = useState([])
+  const [alerts, setAlerts] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [markingRead, setMarkingRead] = useState(false)
 
   const load = () => {
-    apiFetch('/api/staff/teachers/')
-      .then(setTeachers)
+    Promise.all([
+      apiFetch('/api/staff/teachers/'),
+      apiFetch('/api/staff/alerts/?limit=10'),
+    ])
+      .then(([teacherList, alertData]) => {
+        setTeachers(teacherList)
+        setAlerts(alertData)
+      })
       .catch((err) => setError(err.message))
   }
 
@@ -32,6 +91,26 @@ export default function StaffDashboardPage() {
     }
   }
 
+  const markAllRead = async () => {
+    setError('')
+    setMessage('')
+    setMarkingRead(true)
+    try {
+      const data = await apiFetch('/api/staff/alerts/mark-read/', {
+        method: 'POST',
+        body: JSON.stringify({ all: true }),
+      })
+      setAlerts(data)
+      setMessage('All alerts marked as read.')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setMarkingRead(false)
+    }
+  }
+
+  const unreadTotal = alerts?.unread?.total || 0
+
   return (
     <div>
       <h1>Staff dashboard</h1>
@@ -40,6 +119,45 @@ export default function StaffDashboardPage() {
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
+
+      <section className="staff-alerts">
+        <div className="card-row staff-alerts-header">
+          <h2>
+            Alerts
+            {unreadTotal > 0 && (
+              <span className="badge badge--success staff-alerts-count">{unreadTotal}</span>
+            )}
+          </h2>
+          <button
+            type="button"
+            className="secondary"
+            disabled={markingRead || unreadTotal === 0}
+            onClick={markAllRead}
+          >
+            {markingRead ? 'Marking…' : 'Mark all read'}
+          </button>
+        </div>
+        <div className="staff-alerts-grid">
+          <AlertSection
+            title="New students"
+            emptyLabel="No recent signups."
+            items={alerts?.users || []}
+            seeAllTo="/staff/students"
+          />
+          <AlertSection
+            title="Membership"
+            emptyLabel="No recent membership changes."
+            items={alerts?.membership || []}
+            seeAllTo="/staff/memberships"
+          />
+          <AlertSection
+            title="Payments"
+            emptyLabel="No recent payments."
+            items={alerts?.financial || []}
+            seeAllTo="/staff/reports"
+          />
+        </div>
+      </section>
 
       <div className="card">
         <div className="card-title">{label('studio')} schedule</div>

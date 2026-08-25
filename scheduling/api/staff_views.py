@@ -36,6 +36,7 @@ from scheduling.services.meetings import create_meeting_link
 from scheduling.services.reports import staff_reports
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
 from scheduling.services.staff import get_teacher, list_teachers
+from scheduling.services.staff_alerts import list_staff_alerts, mark_alerts_read
 from scheduling.services.users import get_student, list_students, update_user_account
 
 User = get_user_model()
@@ -544,3 +545,40 @@ class StaffReportsView(APIView):
             days = 30
         days = max(1, min(days, 365))
         return Response(staff_reports(days=days))
+
+
+class StaffAlertsView(APIView):
+    """In-app staff alerts — users, membership, and financial streams."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        return Response(list_staff_alerts(request.user, limit=limit))
+
+
+class StaffAlertsMarkReadView(APIView):
+    permission_classes = [IsStaff]
+
+    def post(self, request):
+        mark_all = bool(request.data.get('all'))
+        alert_ids = request.data.get('alert_ids')
+        if not mark_all and not alert_ids:
+            return Response(
+                {'detail': 'Provide alert_ids or all: true.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if alert_ids is not None and not isinstance(alert_ids, list):
+            return Response(
+                {'detail': 'alert_ids must be a list.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        marked = mark_alerts_read(
+            request.user,
+            alert_ids=alert_ids,
+            mark_all=mark_all,
+        )
+        return Response({'marked': marked, **list_staff_alerts(request.user)})

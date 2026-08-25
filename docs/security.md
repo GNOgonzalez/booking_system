@@ -17,9 +17,9 @@ Current posture, known trade-offs, and the plan for tightening them. Companion t
 
 ---
 
-## Known trade-off: JWT in localStorage
+## Known trade-off: JWT in sessionStorage
 
-`frontend/src/api.js` stores access + refresh tokens in `localStorage`.
+`frontend/src/api.js` stores access + refresh tokens in **sessionStorage** (per browser tab).
 
 **Risk:** any XSS that executes in the SPA can read both tokens and act as the user
 until expiry. This is the main reason XSS protections below matter.
@@ -38,7 +38,7 @@ Move to httpOnly cookie auth (or a BFF pattern):
 
 1. Backend issues `httpOnly` + `Secure` + `SameSite` cookies instead of JSON tokens.
 2. CSRF protection on state-changing requests (double-submit or Django CSRF).
-3. Remove `localStorage` usage from `api.js`; rely on `credentials: 'include'`.
+3. Remove browser token storage from `api.js`; rely on `credentials: 'include'`.
 4. CORS: switch from bearer-token model to cookie model (`Access-Control-Allow-Credentials`).
 
 Tracked in `docs/audit-remediation-plan.md` → Explicit deferrals.

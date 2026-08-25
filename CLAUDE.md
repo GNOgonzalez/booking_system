@@ -42,6 +42,7 @@ pip install -r requirements.txt
 python manage.py migrate
 python manage.py bootstrap_sandbox            # groups only
 python manage.py bootstrap_sandbox --demo     # demo users (demo1234)
+python manage.py bootstrap_sandbox --demo --showcase  # portfolio demo seed
 python manage.py purge_expired_homework       # delete homework files past 7 days
 
 python manage.py runserver                    # :8000
@@ -86,13 +87,13 @@ scheduling/views/             HTML views (package)
 progress/models.py            SessionFeedback, ScoreDimension, HomeworkAssignment, HomeworkEntry
 progress/services.py          metrics, feedback, student_dashboard
 progress/homework_services.py file exchange, journal, purge
-progress/api.py + api_urls.py DRF for progress + homework + staff metrics
+progress/api/ + api_urls.py     DRF for progress + homework + staff metrics
 frontend/src/pages/           React SPA (all pages)
-frontend/src/hooks/           useTeacherScope, useGlossary, useScoreDimensions, useTeacherPermissions
-TICKETS.md                    bug tracker
+frontend/src/hooks/           useTeacherScope, useGlossary, useScoreDimensions, …
 docs/architecture-and-roadmap.md
-docs/audit-remediation-plan.md
-docs/learn/                   CS50P / Django self-study (optional)
+docs/operations-guide.md
+docs/learn-the-app.md         Plain-English tour; CS50-aligned study path
+docs/glossary.md
 ```
 
 ---
@@ -112,6 +113,7 @@ docs/learn/                   CS50P / Django self-study (optional)
 
 | Method | Path | Role |
 |--------|------|------|
+| GET | `student/home/` | student |
 | GET | `sessions/open/` | student |
 | GET/POST | `bookings/`, `bookings/create/` | student |
 | POST | `bookings/<id>/cancel/` | student |
@@ -134,6 +136,8 @@ docs/learn/                   CS50P / Django self-study (optional)
 | Method | Path | Role |
 |--------|------|------|
 | GET | `staff/teachers/`, `staff/students/`, `staff/schedule/` | staff |
+| GET | `staff/alerts/` | staff |
+| POST | `staff/alerts/mark-read/` | staff |
 | PATCH | `staff/teachers/<id>/`, `staff/students/<id>/` | staff |
 | GET/PATCH | `staff/glossary/` | staff |
 | GET/PATCH | `staff/llm/` | staff |

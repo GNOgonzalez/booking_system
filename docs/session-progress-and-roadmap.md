@@ -174,7 +174,6 @@ High impact, mostly frontend. See Part 5 for detail.
 | **Stripe** | Test checkout + webhook | Live keys, webhook on deployed URL |
 | **Google** | OAuth + placeholder Meet until consent | Production OAuth consent, token refresh |
 | **Deploy** | Docker Compose / Procfile | TLS, `MEDIA_ROOT` volume, env secrets |
-| **SimplyBook** | Inert adapter | Only if you need external sync |
 
 ### Architecture direction (longer term)
 
@@ -221,13 +220,14 @@ Review of the React app as of 2026-07-06. Grouped by impact.
 
 ### Medium-term UX improvements
 
+- **Staff dashboard alerts (done v1):** in-app users / membership / financial streams with per-staff unread; email later
 - **Student home widget:** next lesson (time, teacher, join link), low-ticket warning
 - **Bookings page:** upcoming vs past tabs; “starts in X hours” for today
 - **Request history:** status badges + link to booking when approved
 - **Teacher home widget:** today’s sessions, pending request count
 - **Availability:** visual week grid (reuse slot calendar patterns)
 - **Shared infrastructure:** `PageLoading` skeleton, toast notifications, in-app confirm dialog component
-- **Nav badges:** pending class requests (teacher), optional unread inbox count
+- **Nav badges:** pending class requests (teacher), optional unread inbox count / staff alert count
 - **Multi-role users:** home page shows both student and teacher sections (today student-only dashboard is hidden if user is also teacher)
 
 ### Nice-to-haves
@@ -286,8 +286,9 @@ Do not rewrite everything at once.
 | Doc | Use when |
 |-----|----------|
 | **This file** | What’s done + what’s next after latest sprint |
+| [`operations-guide.md`](./operations-guide.md) | Deploy, onboard a studio, maintain, IT handoff |
+| [`learn-the-app.md`](./learn-the-app.md) | Plain-English tour; CS50-aligned study path |
 | [`architecture-and-roadmap.md`](./architecture-and-roadmap.md) | System design, data model, API table |
-| [`audit-remediation-plan.md`](./audit-remediation-plan.md) | Completed audit phases 0–22 |
 | [`future-features.md`](./future-features.md) | Post-audit feature ideas with Cursor prompts |
 | [`next-session-handoff.md`](./next-session-handoff.md) | Stripe/Google setup quick reference (partially superseded) |
 | `CLAUDE.md` | AI assistant conventions |

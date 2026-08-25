@@ -13,6 +13,10 @@ from django.utils import timezone
 from scheduling.models import Membership, MembershipPlan, Payment
 from scheduling.services.membership import active_memberships_for
 from scheduling.services.notifications import send_membership_receipt
+from scheduling.services.staff_alerts import (
+    membership_event_for_plan,
+    notify_purchase,
+)
 from scheduling.services.tickets import grant_tickets
 
 
@@ -142,6 +146,11 @@ def fulfill_payment(payment_id, *, stripe_checkout_session_id='', stripe_payment
     user = payment.user
     months = payment.quantity
     membership_id = payment.membership_id
+    was_new_subscription = (
+        plan.plan_type != MembershipPlan.PLAN_TICKET_PACK
+        and not Membership.objects.filter(user=user, plan=plan).exists()
+    )
+    tickets_granted = plan.ticket_allowance * months
 
     if plan.plan_type == MembershipPlan.PLAN_TICKET_PACK:
         membership, error = _grant_ticket_pack(user, plan, months=months, membership_id=membership_id)
@@ -171,6 +180,15 @@ def fulfill_payment(payment_id, *, stripe_checkout_session_id='', stripe_payment
         ],
     )
     send_membership_receipt(membership)
+    notify_purchase(
+        payment=payment,
+        membership=membership,
+        membership_event_type=membership_event_for_plan(
+            plan,
+            was_new_subscription=was_new_subscription,
+        ),
+        tickets_granted=tickets_granted,
+    )
     return membership, None
 
 
@@ -213,7 +231,7 @@ def purchase_ticket_pack(user, plan, months=1, membership_id=None):
     membership, error = _grant_ticket_pack(user, plan, months=months, membership_id=membership_id)
     if error:
         return None, error
-    record_payment(
+    payment = record_payment(
         user,
         plan,
         membership,
@@ -221,12 +239,19 @@ def purchase_ticket_pack(user, plan, months=1, membership_id=None):
         quantity=months,
     )
     send_membership_receipt(membership)
+    notify_purchase(
+        payment=payment,
+        membership=membership,
+        membership_event_type=membership_event_for_plan(plan),
+        tickets_granted=plan.ticket_allowance * months,
+    )
     return membership, None
 
 
 def purchase_subscription(user, plan, months=1):
+    was_new_subscription = not Membership.objects.filter(user=user, plan=plan).exists()
     membership = _grant_subscription(user, plan, months=months)
-    record_payment(
+    payment = record_payment(
         user,
         plan,
         membership,
@@ -234,6 +259,15 @@ def purchase_subscription(user, plan, months=1):
         quantity=months,
     )
     send_membership_receipt(membership)
+    notify_purchase(
+        payment=payment,
+        membership=membership,
+        membership_event_type=membership_event_for_plan(
+            plan,
+            was_new_subscription=was_new_subscription,
+        ),
+        tickets_granted=plan.ticket_allowance * months,
+    )
     return membership, None
 
 

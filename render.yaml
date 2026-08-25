@@ -1,10 +1,4 @@
-# Render Blueprint — booking API + Postgres + nightly demo reset
-
-databases:
-  - name: booking-db
-    plan: free
-    databaseName: booking
-    user: booking_user
+# Render Blueprint — booking API + React static site (Postgres on Supabase)
 
 services:
   - type: web
@@ -20,74 +14,33 @@ services:
         generateValue: true
       - key: ALLOWED_HOSTS
         sync: false
-      - key: DB_NAME
-        fromDatabase:
-          name: booking-db
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: booking-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: booking-db
-          property: password
-      - key: DB_HOST
-        fromDatabase:
-          name: booking-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: booking-db
-          property: port
+      - key: DATABASE_URL
+        sync: false
       - key: CORS_ALLOWED_ORIGINS
         sync: false
       - key: ALLOW_MOCK_PAYMENTS
         value: "true"
       - key: SEED_DEMO
         value: "true"
+      - key: SEED_SHOWCASE
+        value: "true"
+      - key: DEMO_RESET_ON_START
+        value: "false"
       - key: SECURE_SSL_REDIRECT
         value: "false"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: booking-db
-          property: connectionString
 
-  - type: cron
-    name: booking-demo-reset
-    runtime: docker
-    schedule: "0 5 * * *"
-    dockerfilePath: ./Dockerfile
-    dockerCommand: python manage.py bootstrap_sandbox --demo --reset
+  - type: web
+    name: booking-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
-      - key: DEBUG
-        value: "False"
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: booking-api
-          envVarKey: SECRET_KEY
-      - key: DB_NAME
-        fromDatabase:
-          name: booking-db
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: booking-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: booking-db
-          property: password
-      - key: DB_HOST
-        fromDatabase:
-          name: booking-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: booking-db
-          property: port
-      - key: DATABASE_URL
-        fromDatabase:
-          name: booking-db
-          property: connectionString
+      - key: VITE_API_BASE
+        sync: false
+      - key: NODE_VERSION
+        value: "24"

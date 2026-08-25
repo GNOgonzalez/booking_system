@@ -48,7 +48,10 @@ export default function LoginPage({ onLogin }) {
         <p className="auth-footer">
           New here? <Link to="/register">Create a student account</Link>
         </p>
-        <p className="auth-hint">Demo: demo_student / demo_teacher · demo1234</p>
+        <p className="auth-hint">
+          Demo: <code>demo_student</code> / <code>demo_teacher</code> / <code>demo_staff</code> · password{' '}
+          <code>demo1234</code>
+        </p>
       </div>
     </div>
   )

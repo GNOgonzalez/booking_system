@@ -586,6 +586,14 @@ textarea:focus {
   margin-top: 0.15rem;
 }
 
+.student-dashboard-alert {
+  border-left: 4px solid var(--warning, #d97706);
+}
+
+.student-dashboard-next-lesson {
+  border-left: 4px solid var(--accent, #2563eb);
+}
+
 @media (max-width: 768px) {
   /* ---------- Mobile shell: drawer nav ---------- */
   .mobile-topbar {
@@ -1467,6 +1475,77 @@ textarea:focus {
   font-size: 1.5rem;
   font-weight: 650;
   line-height: 1.2;
+}
+
+.staff-alerts {
+  margin-bottom: 1.25rem;
+}
+
+.staff-alerts-header {
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.staff-alerts-header h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.15rem;
+}
+
+.staff-alerts-count {
+  font-size: 0.75rem;
+}
+
+.staff-alerts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.staff-alerts-panel {
+  margin-bottom: 0;
+  min-height: 8rem;
+}
+
+.staff-alerts-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.staff-alert-item {
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.staff-alert-item--unread {
+  background: color-mix(in srgb, var(--success-bg) 55%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 25%, var(--line));
+}
+
+.staff-alert-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.staff-alert-title {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 900px) {
+  .staff-alerts-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .reports-mode {

@@ -42,6 +42,7 @@ urlpatterns = [
     path('bookings/', views.MyBookingListView.as_view(), name='api_my_bookings'),
     path('bookings/create/', views.BookingCreateView.as_view(), name='api_booking_create'),
     path('bookings/<int:booking_id>/cancel/', views.BookingCancelView.as_view(), name='api_booking_cancel'),
+    path('student/home/', views.StudentHomeView.as_view(), name='api_student_home'),
     path('class-requests/teachers/', class_request_views.ClassRequestTeacherListView.as_view(), name='api_class_request_teachers'),
     path('class-requests/open-classes/', class_request_views.ClassRequestOpenClassesView.as_view(), name='api_class_request_open_classes'),
     path('class-requests/classes/', class_request_views.ClassRequestTeacherClassesView.as_view(), name='api_class_request_classes'),
@@ -244,4 +245,10 @@ urlpatterns = [
         name='api_staff_membership_plan_detail',
     ),
     path('staff/reports/', staff_views.StaffReportsView.as_view(), name='api_staff_reports'),
+    path('staff/alerts/', staff_views.StaffAlertsView.as_view(), name='api_staff_alerts'),
+    path(
+        'staff/alerts/mark-read/',
+        staff_views.StaffAlertsMarkReadView.as_view(),
+        name='api_staff_alerts_mark_read',
+    ),
 ]

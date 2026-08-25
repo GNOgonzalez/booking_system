@@ -16,12 +16,14 @@ from scheduling.models import (
     MembershipPlan,
     Payment,
     Session,
+    StaffAlert,
 )
 from scheduling.services.blog import create_blog_post
 from scheduling.services.booking import booking_block_reason, cancel_booking, create_booking
 from scheduling.services.calendar import session_to_ics
 from scheduling.services.class_requests import approve_class_request, create_class_request, deny_class_request
 from scheduling.services.payments import fulfill_payment, purchase_membership
+from scheduling.services.registration import register_student
 from scheduling.services.uploads import validate_blog_image, validate_homework_file
 
 
@@ -301,6 +303,153 @@ class StaffReportsTests(TestCase):
         self.assertIn('bookings', data)
         self.assertIn('teachers', data)
         self.assertIn('students', data)
+
+
+class StaffAlertsTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff1', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.staff2 = User.objects.create_user('staff2', password='pass')
+        self.staff2.groups.add(Group.objects.get(name='staff'))
+        self.student = User.objects.create_user('s1', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.plan = MembershipPlan.objects.create(
+            name='Basic',
+            price_cents=2000,
+            ticket_allowance=8,
+        )
+
+    def _staff_token(self, user='staff1'):
+        res = self.client.post(
+            '/api/auth/token/',
+            {'username': user, 'password': 'pass'},
+            content_type='application/json',
+        )
+        return res.json()['access']
+
+    def test_register_creates_users_alert(self):
+        user, error = register_student(
+            username='newbie',
+            email='newbie@example.com',
+            password='demo1234!',
+            display_name='Newbie',
+        )
+        self.assertIsNone(error)
+        self.assertIsNotNone(user)
+        alert = StaffAlert.objects.get(category=StaffAlert.CATEGORY_USERS)
+        self.assertEqual(alert.event_type, StaffAlert.EVENT_STUDENT_REGISTERED)
+        self.assertEqual(alert.actor_id, user.id)
+
+    def test_purchase_creates_financial_and_membership_alerts(self):
+        with override_settings(
+            STRIPE={
+                'SECRET_KEY': '',
+                'PUBLISHABLE_KEY': '',
+                'WEBHOOK_SECRET': '',
+                'ENABLED': False,
+            },
+            DEBUG=True,
+            ALLOW_MOCK_PAYMENTS=True,
+        ):
+            membership, error = purchase_membership(self.student, self.plan.id)
+            self.assertIsNone(error)
+            self.assertIsNotNone(membership)
+            financial = StaffAlert.objects.filter(category=StaffAlert.CATEGORY_FINANCIAL)
+            membership_alerts = StaffAlert.objects.filter(category=StaffAlert.CATEGORY_MEMBERSHIP)
+            self.assertEqual(financial.count(), 1)
+            self.assertEqual(membership_alerts.count(), 1)
+            self.assertEqual(financial.get().event_type, StaffAlert.EVENT_PAYMENT_COMPLETED)
+            self.assertEqual(
+                membership_alerts.get().event_type,
+                StaffAlert.EVENT_MEMBERSHIP_ACTIVATED,
+            )
+
+            purchase_membership(self.student, self.plan.id)
+            self.assertEqual(
+                StaffAlert.objects.filter(
+                    category=StaffAlert.CATEGORY_MEMBERSHIP,
+                    event_type=StaffAlert.EVENT_MEMBERSHIP_RENEWED,
+                ).count(),
+                1,
+            )
+
+    def test_fulfill_payment_creates_alerts_once(self):
+        payment = Payment.objects.create(
+            user=self.student,
+            plan=self.plan,
+            amount_cents=2000,
+            quantity=1,
+            provider=Payment.PROVIDER_STRIPE,
+            status=Payment.STATUS_PENDING,
+        )
+        fulfill_payment(payment.id)
+        self.assertEqual(StaffAlert.objects.filter(category=StaffAlert.CATEGORY_FINANCIAL).count(), 1)
+        fulfill_payment(payment.id)
+        self.assertEqual(StaffAlert.objects.filter(category=StaffAlert.CATEGORY_FINANCIAL).count(), 1)
+
+    def test_staff_alerts_requires_staff(self):
+        res = self.client.get('/api/staff/alerts/')
+        self.assertEqual(res.status_code, 401)
+
+        student_token = self.client.post(
+            '/api/auth/token/',
+            {'username': 's1', 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        res = self.client.get(
+            '/api/staff/alerts/',
+            HTTP_AUTHORIZATION=f'Bearer {student_token}',
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_staff_alerts_list_and_mark_read_per_user(self):
+        register_student(
+            username='newbie',
+            email='newbie@example.com',
+            password='demo1234!',
+        )
+        with override_settings(
+            STRIPE={
+                'SECRET_KEY': '',
+                'PUBLISHABLE_KEY': '',
+                'WEBHOOK_SECRET': '',
+                'ENABLED': False,
+            },
+            DEBUG=True,
+            ALLOW_MOCK_PAYMENTS=True,
+        ):
+            purchase_membership(self.student, self.plan.id)
+
+        token = self._staff_token('staff1')
+        res = self.client.get(
+            '/api/staff/alerts/',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(len(data['users']), 1)
+        self.assertEqual(len(data['financial']), 1)
+        self.assertEqual(len(data['membership']), 1)
+        self.assertEqual(data['unread']['total'], 3)
+        self.assertTrue(data['users'][0]['is_unread'])
+
+        res = self.client.post(
+            '/api/staff/alerts/mark-read/',
+            {'all': True},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['unread']['total'], 0)
+
+        token2 = self._staff_token('staff2')
+        res = self.client.get(
+            '/api/staff/alerts/',
+            HTTP_AUTHORIZATION=f'Bearer {token2}',
+        )
+        self.assertEqual(res.json()['unread']['total'], 3)
 
 
 class StripePaymentTests(TestCase):
@@ -2040,3 +2189,69 @@ class LLMUrlValidationTests(TestCase):
         from integrations.llm.url_validation import validate_llm_url
 
         validate_llm_url('http://127.0.0.1:11434', provider='ollama')
+
+
+class StudentHomeTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='student')
+        Group.objects.create(name='teacher')
+        self.teacher = User.objects.create_user('t1', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('s1', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.plan = MembershipPlan.objects.create(name='Japanese', price_cents=2000, ticket_allowance=8)
+        Membership.objects.create(
+            user=self.student,
+            plan=self.plan,
+            is_active=True,
+            tickets_remaining=2,
+            valid_until=timezone.now().date() + timedelta(days=30),
+        )
+        self.session = Session.objects.create(
+            teacher=self.teacher,
+            title='Next lesson',
+            start_time=timezone.now() + timedelta(days=3),
+            end_time=timezone.now() + timedelta(days=3, hours=1),
+            capacity=2,
+            status='open',
+        )
+        Booking.objects.create(student=self.student, session=self.session, status='confirmed')
+
+    def _token(self):
+        res = self.client.post(
+            '/api/auth/token/',
+            {'username': 's1', 'password': 'pass'},
+            content_type='application/json',
+        )
+        return res.json()['access']
+
+    def test_student_home_returns_next_lesson_and_low_ticket_warning(self):
+        res = self.client.get(
+            '/api/student/home/',
+            HTTP_AUTHORIZATION=f'Bearer {self._token()}',
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data['has_membership'])
+        self.assertTrue(data['low_ticket_warning'])
+        self.assertEqual(data['tickets_remaining'], 2)
+        self.assertIsNotNone(data['next_lesson'])
+        self.assertEqual(data['next_lesson']['session_title'], 'Next lesson')
+
+
+class ShowcaseSeedTests(TestCase):
+    def test_showcase_grants_demo_student_membership_and_booking(self):
+        from django.core.management import call_command
+
+        call_command('bootstrap_sandbox', '--demo', '--showcase')
+        student = User.objects.get(username='demo_student')
+        self.assertTrue(
+            Membership.objects.filter(user=student, is_active=True, tickets_remaining__gt=0).exists()
+        )
+        self.assertTrue(
+            Booking.objects.filter(
+                student=student,
+                status='confirmed',
+                session__start_time__gte=timezone.now(),
+            ).exists()
+        )

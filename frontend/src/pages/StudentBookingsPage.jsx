@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import SessionCalendar from '../components/SessionCalendar.jsx'
 
@@ -24,21 +25,40 @@ function bookingToSession(booking) {
   }
 }
 
+function isUpcoming(booking) {
+  if (!booking.session_start_time) return false
+  return new Date(booking.session_start_time) >= new Date()
+}
+
 export default function StudentBookingsPage() {
   const [bookings, setBookings] = useState([])
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
   const [cancelling, setCancelling] = useState(false)
+  const [tab, setTab] = useState('upcoming')
 
   const load = () => {
+    setLoading(true)
     apiFetch('/api/bookings/')
       .then(setBookings)
       .catch((err) => setError(err.message))
+      .finally(() => setLoading(false))
   }
 
   useEffect(load, [])
 
-  const sessions = useMemo(() => bookings.map(bookingToSession), [bookings])
+  const upcomingBookings = useMemo(
+    () => bookings.filter((b) => b.status === 'confirmed' && isUpcoming(b)),
+    [bookings],
+  )
+  const pastBookings = useMemo(
+    () => bookings.filter((b) => !isUpcoming(b) || b.status !== 'confirmed'),
+    [bookings],
+  )
+
+  const visibleBookings = tab === 'upcoming' ? upcomingBookings : pastBookings
+  const sessions = useMemo(() => visibleBookings.map(bookingToSession), [visibleBookings])
 
   const cancel = async (bookingId) => {
     const booking = bookings.find((item) => item.id === bookingId)
@@ -63,21 +83,57 @@ export default function StudentBookingsPage() {
   return (
     <div className="page-calendar">
       <h1>My bookings</h1>
-      <p className="page-intro">Your upcoming lessons in calendar view. Click a session to see details or cancel.</p>
+      <p className="page-intro">
+        Your lessons in calendar view. Click a session to see details or cancel an upcoming booking.
+      </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
-      {!error && sessions.length > 0 && (
+
+      <div className="subject-tabs" role="tablist" aria-label="Booking time">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'upcoming'}
+          className={tab === 'upcoming' ? 'subject-tab active' : 'subject-tab'}
+          onClick={() => setTab('upcoming')}
+        >
+          Upcoming
+          <span className="subject-tab-count">{upcomingBookings.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'past'}
+          className={tab === 'past' ? 'subject-tab active' : 'subject-tab'}
+          onClick={() => setTab('past')}
+        >
+          Past
+          <span className="subject-tab-count">{pastBookings.length}</span>
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="empty" style={{ marginTop: '1rem' }}>Loading bookings…</div>
+      ) : sessions.length > 0 ? (
         <SessionCalendar
           sessions={sessions}
           showTeacher
           showNewSession={false}
           showWriteReport={false}
-          onCancelBooking={cancel}
+          onCancelBooking={tab === 'upcoming' ? cancel : undefined}
           cancelling={cancelling}
         />
-      )}
-      {!sessions.length && !error && (
-        <div className="empty" style={{ marginTop: '1rem' }}>No bookings yet.</div>
+      ) : (
+        <div className="empty" style={{ marginTop: '1rem' }}>
+          {tab === 'upcoming' ? (
+            <>
+              No upcoming bookings.{' '}
+              <Link to="/sessions">Browse open sessions</Link> to book a lesson.
+            </>
+          ) : (
+            'No past bookings yet.'
+          )}
+        </div>
       )}
     </div>
   )

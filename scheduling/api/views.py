@@ -60,6 +60,7 @@ from scheduling.services.payments import (
     purchase_membership,
 )
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
+from scheduling.services.student_home import student_home
 from scheduling.services.teacher_permissions import (
     TEACHER_PERMISSION_DEFS,
     permission_denied_response,
@@ -561,6 +562,15 @@ class MembershipView(APIView):
         if error:
             return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
         return Response(MembershipSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+
+class StudentHomeView(APIView):
+    """Aggregated snapshot for the student home dashboard."""
+
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        return Response(student_home(request.user))
 
 
 class MembershipPlanCatalogView(generics.ListAPIView):

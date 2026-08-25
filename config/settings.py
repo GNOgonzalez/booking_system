@@ -9,7 +9,7 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from dotenv import load_dotenv
 
@@ -28,9 +28,9 @@ def env_list(name, default=''):
 
 
 def _database_from_url(url):
-    """Parse postgres:// or postgresql:// URL (Render DATABASE_URL)."""
+    """Parse postgres:// or postgresql:// URL (Render, Supabase, etc.)."""
     parsed = urlparse(url)
-    return {
+    config = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': parsed.path.lstrip('/') or '',
         'USER': parsed.username or '',
@@ -38,6 +38,13 @@ def _database_from_url(url):
         'HOST': parsed.hostname or '',
         'PORT': str(parsed.port or 5432),
     }
+    query = parse_qs(parsed.query)
+    sslmode = (query.get('sslmode') or [None])[0]
+    if not sslmode and parsed.hostname and 'supabase.co' in parsed.hostname:
+        sslmode = 'require'
+    if sslmode:
+        config['OPTIONS'] = {'sslmode': sslmode}
+    return config
 
 
 # Core

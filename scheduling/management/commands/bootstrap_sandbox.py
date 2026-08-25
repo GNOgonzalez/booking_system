@@ -48,6 +48,11 @@ class Command(BaseCommand):
             action='store_true',
             help='Remove demo seed users and data before seeding (use with --demo).',
         )
+        parser.add_argument(
+            '--showcase',
+            action='store_true',
+            help='Grant demo_student membership, an upcoming booking, and showcase-ready state.',
+        )
 
     def _ensure_class_offering(self, teacher, subject, level, focus, topics, *, topics_ordered=False, **extra):
         if isinstance(topics, str):
@@ -149,6 +154,41 @@ class Command(BaseCommand):
         user.save()
         user.groups.add(Group.objects.get(name='student'))
         return user
+
+    def _apply_showcase_seed(self, student, teacher, catalog):
+        """Portfolio demo: demo_student can log in and see a full student UI immediately."""
+        japanese_plan = MembershipPlan.objects.filter(name='Japanese', is_active=True).first()
+        if japanese_plan is None:
+            self.stdout.write(self.style.WARNING('Showcase skipped: Japanese plan not found.'))
+            return
+
+        valid_until = timezone.now().date() + timedelta(days=30)
+        membership, _ = Membership.objects.update_or_create(
+            user=student,
+            plan=japanese_plan,
+            defaults={
+                'is_active': True,
+                'valid_until': valid_until,
+                'tickets_remaining': 8,
+            },
+        )
+        membership.is_active = True
+        membership.valid_until = valid_until
+        membership.tickets_remaining = 8
+        membership.save(update_fields=['is_active', 'valid_until', 'tickets_remaining'])
+
+        now = timezone.now()
+        start = now + timedelta(days=3, hours=2)
+        end = start + timedelta(hours=1)
+        session = self._ensure_demo_session(
+            teacher,
+            catalog['pronunciation'],
+            'demo_showcase_next',
+            start,
+            end,
+        )
+        self._ensure_booking(student, session)
+        self.stdout.write('  Showcase: demo_student has Japanese membership + upcoming lesson.')
 
     def _book_students(self, session, students):
         for student in students:
@@ -513,6 +553,9 @@ class Command(BaseCommand):
                 body='Glad you joined. Book an open session when you are ready.',
             )
 
+        if options['showcase']:
+            self._apply_showcase_seed(student, teacher, catalog)
+
         self.stdout.write(self.style.SUCCESS('Demo data ready.'))
         self.stdout.write('  demo_teacher / demo1234')
         self.stdout.write('  demo_student / demo1234')
@@ -524,3 +567,5 @@ class Command(BaseCommand):
         else:
             self.stdout.write('  gnogonzalez@gmail.com — teacher role ensured')
         self.stdout.write('  7 Japanese + 4 English classes; membership plans (students start without one).')
+        if options['showcase']:
+            self.stdout.write('  Showcase mode: demo_student has membership + upcoming lesson.')

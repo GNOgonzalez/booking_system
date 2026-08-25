@@ -1,0 +1,31 @@
+# Fallback demo reset via GitHub Actions (if Render cron is unavailable).
+# Requires secrets: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, SECRET_KEY
+# Set repository variable USE_GITHUB_DEMO_RESET=true to enable.
+
+name: Reset demo sandbox
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    if: ${{ vars.USE_GITHUB_DEMO_RESET == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Reset demo data
+        env:
+          DEBUG: 'False'
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_PORT: '5432'
+        run: python manage.py bootstrap_sandbox --demo --reset

@@ -2,7 +2,9 @@
 
 Reference for how the booking app is structured today, where it's headed, and how design decisions fit together.
 
-**Last updated:** 2026-07-06
+**Last updated:** 2026-07-06 (post class-requests / catalog sprint)
+
+**Deployment model:** One Postgres database and one `.env` per deployment (single-tenant). Multi-tenant SaaS is not implemented — see [`future-features.md`](./future-features.md) §10. Deploy and run: [`operations-guide.md`](./operations-guide.md).
 
 ---
 
@@ -41,7 +43,7 @@ flowchart TB
 | Layer | Location | Purpose |
 |-------|----------|---------|
 | **React SPA** | `frontend/src/` | Primary UI — all role dashboards migrated |
-| **DRF API** | `scheduling/api/`, `progress/api.py` | JWT auth for React |
+| **DRF API** | `scheduling/api/`, `progress/api/` + `api_urls.py` | JWT auth for React |
 | **HTML UI** | `scheduling/views/`, templates | Legacy/alternate UI (still works) |
 | **Services** | `scheduling/services/`, `progress/services.py`, `progress/homework_services.py` | Booking, permissions, metrics, homework rules |
 | **Apps** | `scheduling/`, `progress/` | Domain models and migrations |
@@ -74,22 +76,26 @@ HTML view   ──► Django view   ──► services/  ──► models  ─�
 
 | Model | Purpose |
 |-------|---------|
-| `Profile` | 1:1 with `User` — display name, timezone |
-| `ClassOffering` | Teachable catalog entry (subject → level → focus → topic) |
+| `Profile` | 1:1 with `User` — display name, timezone, theme, onboarding dismiss, Stripe customer id |
+| `ClassOffering` | Teacher’s teachable class (subject → level → focus → topics via `ClassTopic`) |
 | `ClassType` | Legacy/simple class type (superseded by `ClassOffering` in React) |
-| `Session` | Scheduled slot; FK to teacher + `ClassOffering`; capacity, status |
-| `Booking` | Student seat in a session |
-| `Membership` | Plan gating for students |
+| `CatalogSubject` / `CatalogLevel` / `CatalogFocus` / `CatalogTopic` | Staff-managed **studio roadmap** template; teachers/staff pick from it when creating offerings |
+| `Session` | Scheduled slot; FK to teacher + `ClassOffering`; capacity, status, Meet URL, `google_calendar_event_id` |
+| `Booking` | Student seat in a session; optional FK to originating `ClassRequest` |
+| `MembershipPlan` | Studio pricing tier; subscription or ticket pack; optional `subject` or `allowed_classes` scope |
+| `Membership` | Student’s active plan instance; ticket balance |
+| `Payment` | Stripe checkout session tracking; webhook fulfillment |
 | `AvailabilityBlock` | Weekly recurring teacher availability |
 | `SpecialAvailability` | One-off availability overrides |
 | `TeacherPermission` | Per-teacher capability flags (staff-controlled) |
 | `StudioGlossary` | Staff-customizable UI terminology |
 | `Message` | Inbox (read-only list in React) |
 | `CurriculumItem` | Published curriculum content |
-| `BlogPost` | Studio announcements on home page (title, body, optional image) |
-| `ClassRequest` | Student-requested class slot; teacher approve/deny; ticket hold rules |
+| `BlogPost` | Studio announcements on home page (Markdown body, optional image) |
+| `ClassRequest` | Student-requested slot during availability; specific teacher or **open to any teacher**; ticket hold until approve/deny |
 | `StudioBranding` | Sign-in + sidebar display name and logo (staff-editable) |
 | `StudioLLMConfig` | Studio-wide LLM provider settings (staff) |
+| `GoogleCredential` | OAuth tokens for teacher/staff Google Calendar + Meet |
 | `DemoItem` | Learning placeholder (admin only) |
 
 ### `progress` app
@@ -102,6 +108,7 @@ HTML view   ──► Django view   ──► services/  ──► models  ─�
 | `Skill` | Optional skill tag on progress reports |
 | `HomeworkAssignment` | Teacher → student file exchange or journal prompt |
 | `HomeworkEntry` | Thread message; optional attachment (7-day TTL) |
+| `SessionHistoryPrivacy` | Student/teacher can hide past session history from peer teachers; staff always see |
 
 ### Relationships (simplified)
 
@@ -128,9 +135,9 @@ erDiagram
 
 | Group | Access |
 |-------|--------|
-| `student` | Book sessions, view progress, homework, membership |
-| `teacher` | Manage own schedule/classes/availability; write reports; assign homework (if permitted) |
-| `staff` | Studio-wide admin: all teachers, metrics, glossary, user active/inactive |
+| `student` | Book sessions, request classes, membership, progress, homework, self-registration |
+| `teacher` | Own schedule/classes/availability; class request inbox; reports; homework (if permitted) |
+| `staff` | Studio-wide admin: all teachers, metrics, glossary, catalog, plans, user active/inactive |
 
 `User.is_staff` / `is_superuser` → Django `/admin/` only. App staff uses the `staff` Group.
 
@@ -152,14 +159,15 @@ Service: `scheduling/services/teacher_permissions.py` — `teacher_can(user, key
 
 Staff configures the LLM at **Staff → AI settings** (`StudioLLMConfig`).
 
-### Booking gates
+### Booking & class-request gates
 
 | Check | Where |
 |-------|-------|
-| `can_book` | `scheduling/services/booking.py` |
-| `create_booking` | Same — single entry point |
-| `cancel_booking` | `scheduling/services/booking.py` |
-| Membership active | `scheduling/services/membership.py` |
+| `can_book` / `create_booking` | `scheduling/services/booking.py` |
+| `cancel_booking` | Same |
+| Membership active / plan scope | `scheduling/services/membership.py` |
+| Class request create / approve / deny | `scheduling/services/class_requests.py` |
+| Bookable slot options (availability − busy) | `scheduling/services/scheduling_slots.py` |
 
 ---
 
@@ -169,79 +177,88 @@ Staff configures the LLM at **Staff → AI settings** (`StudioLLMConfig`).
 booking_scheduling_app/
 ├── config/
 │   ├── settings.py          # DRF, CORS, JWT, MEDIA, integrations
+│   ├── middleware.py        # CSP (production)
 │   └── urls.py              # /api/, /api/progress/, media (DEBUG)
 ├── scheduling/
 │   ├── models.py
-│   ├── services/            # booking, availability, classes, users, glossary, staff, …
+│   ├── services/            # booking, class_requests, scheduling_slots, class_catalog, …
 │   ├── views/               # HTML dashboards (package)
-│   ├── api/                 # DRF: views, serializers, staff_views, glossary_views
+│   ├── api/                 # DRF: views, serializers, staff_views, class_request_views, …
 │   ├── templates/
-│   └── management/commands/ # bootstrap_sandbox, sync_simplybook
+│   └── management/commands/ # bootstrap_sandbox, purge_expired_homework
 ├── progress/
 │   ├── models.py
 │   ├── services.py          # metrics, feedback, student dashboard
 │   ├── homework_services.py # file exchange + journal + purge
-│   ├── api.py + api_urls.py
+│   ├── api/                 # split package (dashboard, homework, feedback, history, staff)
+│   ├── api_urls.py
 │   ├── views/ + templates/
 │   └── management/commands/ # purge_expired_homework
 ├── integrations/
-│   ├── google/meet.py       # placeholder Meet links
+│   ├── stripe/              # Checkout + webhooks
 │   ├── llm/client.py        # OpenAI / Anthropic / Ollama HTTP client
-│   └── simplybook/          # adapter scaffold
+│   └── google/              # OAuth + Calendar API Meet links
 ├── frontend/src/
 │   ├── pages/               # role-specific React pages
-│   ├── components/          # SessionDetailPanel, HomeworkThread, …
-│   └── hooks/               # useTeacherScope, useGlossary, useScoreDimensions, …
+│   ├── components/          # calendars, modals, HomeworkThread, MarkdownPreview, …
+│   ├── hooks/               # useTeacherScope, useGlossary, useBranding, …
+│   └── utils/datetime.js    # timezone + local ↔ ISO helpers
 ├── docs/
 │   ├── architecture-and-roadmap.md   # this file
-│   ├── audit-remediation-plan.md     # execution plan (audit + features)
-│   ├── glossary.md                   # developer terminology
-│   └── learn/                        # CS50P / Django self-study (optional)
-├── media/                   # gitignored — homework + blog uploads
-└── TICKETS.md               # bug tracker
+│   ├── operations-guide.md           # deploy, env, maintenance
+│   ├── learn-the-app.md              # plain-English walkthrough (owner / new dev)
+│   └── future-features.md            # backlog
+├── media/                   # gitignored — homework + blog + branding uploads
+└── .github/workflows/ci.yml # test + ruff + frontend build
 ```
 
 ---
 
 ## 6. Roadmap — phase status
 
+### Sandbox & audit (complete)
+
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 0 — Environment | ✅ | Postgres, venv, Django project |
-| 1 — Users & roles | ✅ | Groups, Profile, dashboards |
-| 2 — Booking slice | ✅ | Session, Booking, services |
-| 3 — Availability | ✅ | Blocks + special availability |
-| 4 — Messages & curriculum | ✅ | Inbox + curriculum (read in React) |
-| 5 — React + DRF | ✅ | Full SPA migration |
-| 6 — Polish | ✅ | Email, calendar, mock payments, deploy config |
-| Beyond — scaffolds | ✅ | Google Meet, SimplyBook, `progress/` app |
+| 0–6 — Environment through React SPA | ✅ | Postgres, booking, availability, DRF migration |
+| 7–15 — Audit remediation | ✅ | Security, tests, CI, Ruff, media privacy — [`audit-remediation-plan.md`](./audit-remediation-plan.md) |
+| 16–21 — Audit plan Part B | ✅ | Session history privacy, Stripe E2E, themes, onboarding, Google OAuth |
+| 22 — Markdown preview | ✅ | `scheduling/services/markdown.py` + blog/homework preview UI |
 
-### Post-sandbox additions (2026)
+### Post-audit product work (2026)
 
 | Feature | Where |
 |---------|-------|
 | Staff studio admin | `scheduling/api/staff_views.py`, React staff pages |
 | Teacher permission flags | `TeacherPermission` + staff permissions UI |
 | CRUD (sessions, classes, feedback, availability) | Teacher + staff APIs; edit/delete in React |
-| User active/inactive | `scheduling/services/users.py`, staff student/teacher PATCH |
-| Subject-scoped metrics | `ScoreDimension.subject`, staff metrics page (drag reorder, min/max) |
-| Studio glossary | `StudioGlossary`, `scheduling/services/glossary.py`, `useGlossary.jsx` |
-| Student progress by subject | `student_dashboard()` service, `/api/progress/dashboard/` |
-| Homework (files + journal) | `HomeworkAssignment`, `HomeworkEntry`, 7-day file purge |
-| Studio LLM + teacher AI permission | `StudioLLMConfig`, `integrations/llm/`, `use_ai` permission |
-| Blog announcements | `BlogPost`, `scheduling/services/blog.py`, `BlogFeed`, `BlogManagePage` |
-| Class requests | `ClassRequest`, `scheduling/services/class_requests.py`, student request + teacher approval UI |
-| Sign-in branding | `StudioBranding`, `GET /api/branding/`, `StaffBrandingPage` |
-| Stripe Checkout + webhook | `integrations/stripe/`, mock mode when keys unset |
+| User active/inactive | `scheduling/services/users.py`, staff PATCH |
+| Subject-scoped metrics | `ScoreDimension.subject`, `StaffMetricsPage` |
+| Studio glossary | `StudioGlossary`, `useGlossary.jsx` |
+| Student progress by subject | `student_dashboard()`, `/api/progress/dashboard/` |
+| Homework (files + journal) | `HomeworkAssignment`, 7-day file purge |
+| Studio LLM + teacher AI | `StudioLLMConfig`, `use_ai` permission |
+| Blog announcements | `BlogPost`, `BlogFeed`, Markdown body |
+| Sign-in branding | `StudioBranding`, `StaffBrandingPage` |
+| Stripe Checkout + webhook | `integrations/stripe/`, checkout polling in React |
+| **Class catalog roadmap** | `CatalogSubject`…`CatalogTopic`, `StaffClassCatalogPage` |
+| **Scheduling slots** | `scheduling_slots.py`, availability calendars in UI |
+| **Class requests (extended)** | Open-to-any-teacher, slot picker, notification flow |
+| **Student self-registration** | `POST /api/auth/register/`, `RegisterPage` |
+| **Subject-scoped membership plans** | `MembershipPlan.subject` |
+| **Google Calendar + Meet** | `GoogleCredential`, Calendar API when connected |
+| **Mobile React shell** | Drawer nav; booking/request confirm modals |
 
-### Planned (see `docs/audit-remediation-plan.md`)
+### Not built yet (see [`future-features.md`](./future-features.md))
 
-| Work | Phase | Notes |
-|------|-------|-------|
-| Audit remediation (security, tests, CI) | 0–15 | High priority before production |
-| Cross-teacher **past** session history + privacy | 16 | Student/teacher can hide from peer teachers; staff always see |
-| Stripe E2E verify, themes, onboarding, Google Meet | 17–20 | Personal integration + UX polish |
-| **Markdown preview** for blog + journal | 22 | Plain textarea + sanitized preview; XSS-safe pipeline |
+| Work | Notes |
+|------|-------|
+| Multi-tenant `Organization` | One deployment serving many studios |
+| Platform Stripe Billing | Studios pay vendor for the product |
+| Availability-first booking (§11) | Session created on first book |
+| httpOnly cookie auth | Replace JWT in browser storage |
+| Production media (S3) | Homework at scale |
+| Homework PDF/image markup | Teacher markup overlay |
 
 ---
 
@@ -256,6 +273,11 @@ Staff manage the studio without impersonating Django admin.
 | Teacher permissions | `…/permissions/` | `StaffTeacherPermissionsPage` |
 | Studio-wide schedule | `/api/staff/schedule/` | `StaffSchedulePage` |
 | Create class for any teacher | `/api/staff/classes/` | `StaffCreateClassPage` |
+| Class catalog roadmap | `/api/staff/class-catalog/` | `StaffClassCatalogPage` |
+| Membership plans | `/api/staff/membership-plans/` | `StaffMembershipPlansPage` |
+| Studio reports | `/api/staff/reports/` | `StaffReportsPage` |
+| Sign-in branding | `/api/staff/branding/` | `StaffBrandingPage` |
+| LLM settings | `/api/staff/llm/` | `StaffLLMSettingsPage` |
 | Student active/inactive | `/api/staff/students/` | `StaffStudentsPage` |
 | Metric names (per subject) | `/api/progress/staff/score-dimensions/` | `StaffMetricsPage` |
 | UI terminology | `/api/staff/glossary/` | `StaffGlossaryPage` |
@@ -292,21 +314,61 @@ Two assignment kinds — each is tied to **one session** the student is booked o
 - Purge: automatic on list views + `python manage.py purge_expired_homework`
 - Permission: `assign_homework` teacher flag
 - React: `TeacherHomeworkPage`, `StudentHomeworkPage`, `HomeworkThread` component
-
-**Content format today:** blog body, journal entries, and homework messages are **plain text** (rendered as text in React — no raw HTML). See §15.
+- Thread messages support **Markdown** (sanitized on render — see §14).
 
 ### Studio blog
 
 - Staff/teachers with `manage_blog` publish announcements on the home page.
 - API: `GET /api/blog/`, staff manage `GET/POST /api/blog/manage/`, image upload with size limits.
-- React: `BlogFeed` (home), `BlogManagePage` (authoring).
-- **Planned (Phase 22):** Markdown authoring with sanitized preview below the textarea.
+- React: `BlogFeed` (home), `BlogManagePage` (authoring with live preview).
+- Body stored as Markdown source; API may expose `body_html` from `render_safe_markdown()`.
 
-### Class requests
+### Session history privacy
 
-- Students request a class during teacher availability; teacher approves or denies.
-- Ticket hold on request; refund rules differ from normal booking cancel after approval.
-- Service: `scheduling/services/class_requests.py`; React: `StudentRequestClassPage`, `TeacherClassRequestsPage`.
+- Students and teachers can hide a past session from **peer teachers** (`SessionHistoryPrivacy`).
+- Staff always see full history. API under `/api/progress/…/history/` and session privacy endpoints.
+
+### Class requests & scheduling slots
+
+Two paths for students to get a lesson outside pre-published open sessions:
+
+```text
+STUDENT REQUEST
+  Pick teacher (or "any available teacher" for subject/level/focus)
+  → pick slot from availability calendar (or custom time)
+  → tickets held on submit
+
+TEACHER / SYSTEM
+  Specific request → assigned teacher approves or denies
+  Open request → any eligible teacher may accept (first approval wins)
+
+ON APPROVE
+  create Session + Booking → notify_booking_created (student confirmation email)
+```
+
+| Piece | Where |
+|-------|-------|
+| Request CRUD + approve/deny | `scheduling/services/class_requests.py` |
+| Open pool + eligible teachers | `open_to_any_teacher`, `teachers_for_open_profile()` |
+| Slot list from availability | `scheduling/services/scheduling_slots.py` |
+| Notifications | Teacher emailed on submit; student emailed on approve (not on submit) |
+| React | `StudentRequestClassPage`, `AvailabilitySlotCalendar`, `TeacherClassRequestsPage` |
+
+Teachers also use **scheduling slots** when creating sessions (`TeacherCreateSessionPage`) and can run an availability check before save.
+
+### Class catalog (studio roadmap)
+
+Staff maintain a hierarchical template: **Subject → Level → Focus → Topic** (`Catalog*` models). Teachers and staff pick from this when creating `ClassOffering` rows — the roadmap is shared; each teacher’s offerings are their instances.
+
+- Service: `scheduling/services/class_catalog.py`
+- API: `GET /api/class-catalog/` (read), `GET/PATCH /api/staff/class-catalog/` (staff edit)
+- React: `StaffClassCatalogPage`, `ClassCatalogPicker`
+
+### Student registration & onboarding
+
+- **Self-registration:** `POST /api/auth/register/` → `student` group + JWT; React `RegisterPage`.
+- **Onboarding checklist:** `GET/PATCH /api/me/onboarding/`; home widget with dismiss + deep links.
+- **Profile:** theme (light/dark/system), timezone (auto-sync from browser when still UTC), optional Google connect for teachers/staff.
 
 ### Studio branding
 
@@ -326,31 +388,42 @@ Two assignment kinds — each is tied to **one session** the student is booked o
 
 ## 9. API surface (React / JWT)
 
+High-signal routes — browsable schema at http://127.0.0.1:8000/api/
+
 ### `scheduling` — `/api/`
 
 | Area | Key paths |
 |------|-----------|
-| Auth | `auth/token/`, `auth/token/refresh/` |
-| Account | `me/`, `me/password/` |
+| Auth | `auth/token/`, `auth/token/refresh/`, `auth/register/` |
+| Account | `me/`, `me/password/`, `me/onboarding/` |
+| Markdown | `markdown/preview/` (sanitized HTML for live preview) |
 | Glossary | `glossary/` (read), `staff/glossary/` (staff edit) |
-| Student | `sessions/open/`, `bookings/`, `membership/` |
-| Teacher | `teacher/sessions/`, `teacher/classes/`, `teacher/availability/`, `teacher/permissions/` |
-| Shared | `messages/`, `curriculum/` |
-| Staff | `staff/teachers/`, `staff/students/`, `staff/schedule/`, `staff/classes/`, `staff/teachers/<id>/…`, `staff/branding/` |
-| Blog | `blog/`, `blog/manage/` |
-| Class requests | `class-requests/` (student), `teacher/class-requests/` |
-| Branding | `branding/` (public read) |
+| Class catalog | `class-catalog/` (read), `staff/class-catalog/` (staff edit) |
+| Branding | `branding/` (public read), `staff/branding/` |
+| Student booking | `sessions/open/`, `bookings/`, `bookings/create/`, `bookings/<id>/cancel/` |
+| Membership | `membership/`, `membership/plans/`, `membership/payment-config/`, `membership/checkout/`, `membership/payments/<id>/` |
+| Stripe webhook | `payments/stripe/webhook/` |
+| Class requests | `class-requests/` (list/create), `class-requests/<id>/`, `class-requests/teachers/`, `class-requests/classes/`, `class-requests/availability/` (`include_slots=true`), `class-requests/open-classes/`, `class-requests/open-availability/` |
+| Teacher schedule | `teacher/sessions/`, `teacher/sessions/<id>/`, `teacher/sessions/availability-check/`, `teacher/scheduling-slots/` |
+| Teacher classes & availability | `teacher/classes/`, `teacher/availability/`, `teacher/special-availability/` |
+| Teacher class requests | `teacher/class-requests/`, `…/approve/`, `…/deny/`, `…/delete/` |
+| Teacher students & privacy | `teacher/students/`, `teacher/students/<id>/history/`, `teacher/sessions/<id>/history-privacy/` |
+| Teacher AI | `teacher/ai/status/`, `teacher/ai/suggest-feedback/` |
+| Google | `integrations/google/connect/`, `…/status/`, `…/disconnect/` |
+| Shared | `messages/`, `curriculum/`, `upload-limits/` |
+| Blog | `blog/`, `blog/manage/`, `blog/<id>/` |
+| Staff | `staff/teachers/`, `staff/students/`, `staff/schedule/`, `staff/classes/`, `staff/class-offerings/`, `staff/membership-plans/`, `staff/reports/`, `staff/teachers/<id>/…`, `staff/llm/` |
 
 ### `progress` — `/api/progress/`
 
 | Area | Key paths |
 |------|-----------|
-| Student | `/`, `dashboard/`, `feedback/`, `homework/` |
+| Student | `/`, `dashboard/`, `feedback/`, `homework/`, `homework/<id>/entries/`, `homework/entries/<id>/download/` |
+| Student privacy | `sessions/<id>/history-privacy/` |
 | Teacher | `feedback/teacher/`, `homework/teacher/` |
+| Teacher history | `teacher/students/<id>/history/` (via scheduling URL for teacher scope) |
 | Metrics | `score-dimensions/` |
-| Staff | `staff/score-dimensions/`, `staff/teachers/<id>/feedback/`, `staff/teachers/<id>/homework/` |
-
-Browsable API: http://127.0.0.1:8000/api/
+| Staff | `staff/score-dimensions/…`, `staff/teachers/<id>/feedback/`, `staff/teachers/<id>/homework/`, `staff/teachers/<id>/students/<id>/history/` |
 
 ---
 
@@ -358,106 +431,108 @@ Browsable API: http://127.0.0.1:8000/api/
 
 | Integration | Status | Config |
 |-------------|--------|--------|
-| Google Meet | Placeholder link | `GOOGLE_*` env |
-| Stripe | Mock purchase | `STRIPE_SECRET_KEY` |
-| SimplyBook | Inert adapter | `SIMPLYBOOK_API_KEY` |
-| Email | Console in dev | `EMAIL_HOST` for SMTP |
+| **Email** | Console in dev; SMTP in prod | `EMAIL_HOST`, … |
+| **Stripe Checkout** | Live when keys set; mock in `DEBUG` only when unset | `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` |
+| **Google Meet + Calendar** | Real Meet URL when teacher connects OAuth; placeholder otherwise; event id on `Session` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
+| **Zoom** | Placeholder links | `ZOOM_*` env |
+| **Studio LLM** | Optional AI note drafting | `STUDIO_LLM_API_KEY` or staff DB config |
 
-Deploy: `docker compose up --build`, or `Procfile` + gunicorn. WhiteNoise serves static files; **homework media** needs a volume or object storage in production (WhiteNoise does not serve `MEDIA_ROOT`).
+Deploy: `docker compose up --build`, or `Procfile` + gunicorn. See [`operations-guide.md`](./operations-guide.md) for full production checklist.
+
+- WhiteNoise serves **static** files only — not `MEDIA_ROOT`.
+- **Homework media** requires a persistent volume or object storage; downloads stay API-gated.
+- React SPA is built with Vite and hosted separately (or same origin); set `VITE_API_BASE` when needed.
 
 ---
 
-## 11. Target product flow (future refactor)
+## 11. Product flows
 
-**Today:** teacher creates `Session` from `ClassOffering` catalog → student books.
-
-**Target:** availability + catalog → student picks slot + class → session born on first booking.
-
-See original design notes below — still valid for Phase 3–4 refactor of *who* creates sessions.
+### Flow A — Open session booking (primary today)
 
 ```text
 TEACHER SETUP
   AvailabilityBlock + ClassOffering catalog
+  → publish Session (optionally via scheduling slot picker)
 
 STUDENT BOOKS
-  Pick class + open session → create_booking() checks membership, capacity, duplicates
+  Browse open sessions → create_booking()
+  → membership + tickets + capacity + duplicate checks
+  → confirmation email (+ Meet link)
 
 CANCEL
-  cancel_booking() — session stays if other bookings remain
+  cancel_booking() — session stays open if other bookings remain
 ```
 
-| Phase 2 (built) | Target (later) |
-|-----------------|----------------|
-| Teacher `SessionForm` | Availability-driven slot picker |
-| `can_book` (group, capacity) | + availability window, plan type |
-| `Session` teacher-created | Option A: session on first booking |
+### Flow B — Class request (availability-driven)
+
+```text
+STUDENT
+  Request specific teacher OR open pool (subject/level/focus)
+  → pick availability slot → tickets held
+
+TEACHER
+  Approve → Session + Booking created
+  Deny / student cancel (pending) → tickets released
+
+EMAILS
+  Submit → teacher(s) notified
+  Approve → student booking confirmation (same as Flow A)
+```
+
+### Flow C — Target (not primary yet)
+
+**Availability-first booking:** student picks class + slot → session born on first booking (unifies Flow A and B). Groundwork: `scheduling_slots.py`, class requests, availability calendars. See [`future-features.md`](./future-features.md) §3.
+
+| Built today | Target (later) |
+|-------------|----------------|
+| Teacher creates `Session`, student books | Student slot pick creates session on first book |
+| Class request as separate path | Single availability-first booking UX |
+| `can_book` (membership, capacity, duplicate) | + strict availability window on instant book |
 
 ---
 
-## 12. External systems (SimplyBook) — future
-
-Postgres is the source of truth. SimplyBook maps in via `integrations/simplybook/` when credentials exist; `external_id` fields on models support idempotent sync. Do not shape core schema around export columns.
-
----
-
-## 13. Decisions log
+## 12. Decisions log
 
 | Topic | Decision |
 |-------|----------|
+| Deployment | Single-tenant: one DB + env per studio customer |
 | Frontend | React primary; templates retained |
 | Roles | Django Groups + per-teacher `TeacherPermission` flags |
-| Class catalog | `ClassOffering` (subject/level/focus/topic); session title from catalog |
+| Class catalog | Shared `Catalog*` roadmap + per-teacher `ClassOffering` instances |
 | Metrics | Studio `ScoreDimension`; optional per-subject scope; max 10 active |
-| Glossary | `StudioGlossary` — staff renames UI terms (student→client, etc.) |
+| Glossary | `StudioGlossary` — staff renames UI terms |
 | Homework files | 7-day TTL; journal text kept; auth-gated download |
-| User-generated content | Plain text only today; Markdown + bleach planned (Phase 22) |
+| User-generated content | Markdown source; bleach-sanitized HTML on render |
+| Class requests | Ticket hold until approve; open pool for any eligible teacher |
 | `can_book` / `create_booking` | `scheduling/services/booking.py` |
-| SimplyBook | Adapter only; clean domain models |
+| `external_id` on models | Optional — for future third-party sync; Postgres is source of truth |
 
 ---
 
-## 14. User-generated content & XSS
+## 13. User-generated content & XSS
 
-Blog posts, journal entries, homework messages, and session notes are stored as **plain text** and displayed in React as text nodes (not `dangerouslySetInnerHTML`). That avoids **XSS (Cross-Site Scripting)** — user-supplied markup cannot run as JavaScript in another member’s browser.
+Blog posts, journal entries, and homework messages are stored as **Markdown source**. The server renders through `scheduling/services/markdown.py` (markdown → **bleach** allowlist). React displays sanitized HTML for previews and feed content — never raw user HTML.
 
-JWT tokens live in `localStorage` in the React app, so XSS would be especially dangerous (stolen tokens). The audit remediation plan (Phases 5, 22) covers CSP headers and a safe formatting path.
-
-### Planned: Markdown with sanitized preview (Phase 22)
+JWT tokens live in **sessionStorage** (per browser tab) in the React app, so XSS would still be dangerous (stolen tokens). Mitigations: short prod refresh lifetime, CSP on Django responses, shared sanitize pipeline. Planned upgrade: httpOnly cookies — [`future-features.md`](./future-features.md) §9.
 
 | Layer | Approach |
 |-------|----------|
-| **Authoring** | Plain `<textarea>`; live **preview panel below** (not WYSIWYG) |
-| **Storage** | Same `TextField` — store Markdown source, not rendered HTML |
-| **Render** | Server: `markdown` → **bleach** allowlist → safe HTML for API `body_html` or on read |
-| **Preview** | Client: optional live preview with same rules; server sanitizes on save |
-| **Scope** | `BlogPost.body`, `HomeworkEntry.body`, journal prompts display |
-
-Shared helper (planned): `scheduling/services/markdown.py` or `progress/markdown.py` — one pipeline for preview, save, and feed display.
+| **Authoring** | Plain `<textarea>`; live preview via `POST /api/markdown/preview/` or client component |
+| **Storage** | `TextField` — Markdown source, not raw HTML |
+| **Render** | `render_safe_markdown()` on read or preview |
+| **Scope** | `BlogPost.body`, `HomeworkEntry.body`, journal prompts |
 
 ---
 
-## 15. Documentation map
+## 14. Documentation map
 
-### Project (day-to-day)
-
-| Doc | Purpose |
-|-----|---------|
-| [`architecture-and-roadmap.md`](./architecture-and-roadmap.md) | This file — system design & roadmap |
-| [`glossary.md`](./glossary.md) | Developer terminology |
-| [`audit-remediation-plan.md`](./audit-remediation-plan.md) | Phased audit fixes + feature work (0–22) |
-| [`future-features.md`](./future-features.md) | Post-audit ideas + Cursor prompts per feature |
-| [`audit_instructions.md`](./audit_instructions.md) | Full-stack audit checklist |
-| [`cursor_ruleset.md`](./cursor_ruleset.md) | Agent propose-before-apply workflow |
-| [`next-session-handoff.md`](./next-session-handoff.md) | Short reference for Part B tasks |
-| `CLAUDE.md` | AI assistant quick reference |
-| `TICKETS.md` | Open bugs and polish |
-
-### Learning (optional)
-
-| Doc | Purpose |
-|-----|---------|
-| [`learn/README.md`](./learn/README.md) | Index of self-study materials |
-| [`learn/LEARN_DJANGO.md`](./learn/LEARN_DJANGO.md) | 5-week Django course on this repo |
-| [`learn/django-vs-crud-project.md`](./learn/django-vs-crud-project.md) | Reflet → Django map |
-| [`learn/postgres-roles-membership-inheritance.md`](./learn/postgres-roles-membership-inheritance.md) | DB roles vs app users |
-| [`learn/future-student-progress-app.md`](./learn/future-student-progress-app.md) | Original progress plan (historical) |
+| Doc | Audience | Purpose |
+|-----|----------|---------|
+| [`architecture-and-roadmap.md`](./architecture-and-roadmap.md) | Engineer | System design, models, API, flows |
+| [`operations-guide.md`](./operations-guide.md) | Engineer / ops | Deploy, env vars, maintenance |
+| [`security.md`](./security.md) | Engineer | Auth, CSP, media privacy |
+| [`glossary.md`](./glossary.md) | Engineer | Terminology (User vs Profile vs Group, etc.) |
+| [`learn-the-app.md`](./learn-the-app.md) | Owner / junior dev | Plain-English tour; CS50-aligned study path |
+| [`future-features.md`](./future-features.md) | Engineer | Backlog with implementation notes |
+| [`README.md`](../README.md) | Engineer | Quickstart, test, build |
+| `CLAUDE.md` | AI / contributor | Conventions and key paths |

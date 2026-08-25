@@ -6,6 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
 from scheduling.models import Profile
+from scheduling.services.staff_alerts import notify_student_registered
 
 User = get_user_model()
 
@@ -34,4 +35,5 @@ def register_student(*, username, email, password, display_name=''):
     if display_name:
         profile.display_name = display_name
         profile.save(update_fields=['display_name'])
+    notify_student_registered(user)
     return user, None

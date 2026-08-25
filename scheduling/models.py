@@ -771,3 +771,69 @@ class CurriculumItem(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class StaffAlert(models.Model):
+    """In-app activity alert for studio staff (signups, membership, payments)."""
+
+    CATEGORY_USERS = 'users'
+    CATEGORY_MEMBERSHIP = 'membership'
+    CATEGORY_FINANCIAL = 'financial'
+    CATEGORY_CHOICES = [
+        (CATEGORY_USERS, 'Users'),
+        (CATEGORY_MEMBERSHIP, 'Membership'),
+        (CATEGORY_FINANCIAL, 'Financial'),
+    ]
+
+    EVENT_STUDENT_REGISTERED = 'student_registered'
+    EVENT_MEMBERSHIP_ACTIVATED = 'membership_activated'
+    EVENT_MEMBERSHIP_RENEWED = 'membership_renewed'
+    EVENT_TICKETS_GRANTED = 'tickets_granted'
+    EVENT_PAYMENT_COMPLETED = 'payment_completed'
+
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, db_index=True)
+    event_type = models.CharField(max_length=40, db_index=True)
+    title = models.CharField(max_length=200)
+    body = models.CharField(max_length=400, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staff_alerts_as_actor',
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.category}:{self.event_type} — {self.title}'
+
+
+class StaffAlertRead(models.Model):
+    """Per-staff read receipt for a StaffAlert."""
+
+    alert = models.ForeignKey(
+        StaffAlert,
+        on_delete=models.CASCADE,
+        related_name='reads',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='staff_alert_reads',
+    )
+    read_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['alert', 'user'],
+                name='unique_staff_alert_read_per_user',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.user_id} read alert {self.alert_id}'

@@ -19,7 +19,7 @@ cp .env.example .env            # fill DB creds
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py bootstrap_sandbox --demo   # demo_teacher / demo_student  (demo1234)
+python manage.py bootstrap_sandbox --demo --showcase   # demo_student has membership + next lesson
 python manage.py runserver                  # http://127.0.0.1:8000
 
 # 2. Frontend (separate terminal)
@@ -117,7 +117,20 @@ Docker image filesystem is ephemeral.
 Unset `STRIPE_SECRET_KEY` to use mock purchases in local dev (`DEBUG=True` only). In production
 (`DEBUG=False`), mock purchases are blocked unless `ALLOW_MOCK_PAYMENTS=true`.
 
-## Roadmap & design
+## Operations & handoff
 
-See [`docs/architecture-and-roadmap.md`](docs/architecture-and-roadmap.md). Bugs and polish are
-tracked in [`TICKETS.md`](TICKETS.md).
+Deploy and maintain: [`docs/operations-guide.md`](docs/operations-guide.md).
+
+## Documentation
+
+| Doc | For |
+|-----|-----|
+| [`docs/architecture-and-roadmap.md`](docs/architecture-and-roadmap.md) | Engineers — design, API, data model |
+| [`docs/operations-guide.md`](docs/operations-guide.md) | Engineers — deploy and env |
+| [`docs/learn-the-app.md`](docs/learn-the-app.md) | Learning the codebase (plain English) |
+| [`docs/security.md`](docs/security.md) | Auth and privacy |
+| [`docs/glossary.md`](docs/glossary.md) | Terminology |
+
+## Roadmap & backlog
+
+See [`docs/architecture-and-roadmap.md`](docs/architecture-and-roadmap.md) and [`docs/future-features.md`](docs/future-features.md).

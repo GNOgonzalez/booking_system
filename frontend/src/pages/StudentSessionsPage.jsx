@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import BookingSuccessModal from '../components/BookingSuccessModal.jsx'
 import SessionCalendar from '../components/SessionCalendar.jsx'
@@ -33,8 +34,10 @@ export default function StudentSessionsPage() {
     teacher: '',
     time: '',
   })
+  const [loading, setLoading] = useState(true)
 
   const load = () => {
+    setLoading(true)
     Promise.all([
       apiFetch('/api/sessions/open/'),
       apiFetch('/api/membership/'),
@@ -51,6 +54,7 @@ export default function StudentSessionsPage() {
         )
       })
       .catch((err) => setError(err.message))
+      .finally(() => setLoading(false))
   }
 
   useEffect(load, [])
@@ -114,12 +118,16 @@ export default function StudentSessionsPage() {
       <h1>Book a lesson</h1>
       <p className="page-intro">
         Browse upcoming lessons on the calendar. Filter by class, time, or teacher, then click a session to book.
-        Or <a href="/sessions/request">request a custom time</a> inside a teacher&apos;s availability.
+        Or <Link to="/sessions/request">request a custom time</Link> inside a teacher&apos;s availability.
         {ticketsRemaining != null && (
           <> You have <strong>{ticketsRemaining}</strong> booking ticket{ticketsRemaining === 1 ? '' : 's'} across your memberships.</>
         )}
       </p>
       {error && <div className="error">{error}</div>}
+      {loading ? (
+        <div className="empty" style={{ marginTop: '1rem' }}>Loading open sessions…</div>
+      ) : (
+        <>
       {bookingSuccess && (
         <BookingSuccessModal
           session={bookingSuccess.session}
@@ -190,10 +198,15 @@ export default function StudentSessionsPage() {
         />
       )}
       {!sessions.length && !error && (
-        <div className="empty" style={{ marginTop: '1rem' }}>No open sessions right now.</div>
+        <div className="empty" style={{ marginTop: '1rem' }}>
+          No open sessions right now.{' '}
+          <Link to="/sessions/request">Request a custom time</Link> instead.
+        </div>
       )}
       {sessions.length > 0 && !filteredSessions.length && !error && (
         <div className="empty" style={{ marginTop: '1rem' }}>No sessions match these filters.</div>
+      )}
+        </>
       )}
     </div>
   )

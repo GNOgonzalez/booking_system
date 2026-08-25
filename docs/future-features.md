@@ -365,8 +365,7 @@ Minimal UI on StudentHomeDashboard. Propose first. Don't commit unless I ask.
 |------|-----|--------|
 | Shared upcoming calendar (peer teacher slots) | Different product from session *history* | `TICKETS.md` |
 | Freeform whiteboard | Homework markup overlay covers the need | this doc §1 |
-| SimplyBook as source of truth | Removed from repo; Postgres is canonical | — |
-| WYSIWYG HTML editor | XSS risk; use Markdown + bleach (Phase 22 done) | — |
+| WYSIWYG HTML editor | XSS risk; use Markdown + bleach | — |
 
 ---
 
