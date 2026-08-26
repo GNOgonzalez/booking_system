@@ -1,6 +1,15 @@
 # Future features
 
-Potential product work **after** the audit remediation plan (Phases 0–22). Each section includes a **Cursor prompt** you can paste when ready to implement.
+Potential product work **after** core studio functionality, security, and UX polish.
+
+**Current priority order** (see [`session-progress-and-roadmap.md`](./session-progress-and-roadmap.md) Part 4):
+
+1. **Functionality** — staff > teacher > student; staff sandbox permission  
+2. **Security** — hardening before expanding staff powers  
+3. **UI/UX** — polish  
+4. **Then** — items in this file (markup, S3, availability refactor, SaaS, etc.)
+
+Each section below includes a **Cursor prompt** you can paste when ready to implement.
 
 **Before any feature:** read `CLAUDE.md`, `docs/cursor_ruleset.md`, and `docs/architecture-and-roadmap.md`. Business logic stays in `scheduling/services/` and `progress/` services — not in React or DRF views.
 

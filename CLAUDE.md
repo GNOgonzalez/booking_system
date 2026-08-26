@@ -43,6 +43,7 @@ python manage.py migrate
 python manage.py bootstrap_sandbox            # groups only
 python manage.py bootstrap_sandbox --demo     # demo users (demo1234)
 python manage.py bootstrap_sandbox --demo --showcase  # portfolio demo seed
+python manage.py bootstrap_sandbox --demo --staff-superuser  # + /admin/ for demo_staff (local only)
 python manage.py purge_expired_homework       # delete homework files past 7 days
 
 python manage.py runserver                    # :8000
@@ -54,6 +55,7 @@ cd frontend && npm install && npm run dev     # :5173
 Deploy: `docker compose up --build` (or `Procfile` + gunicorn). Config via `.env` (see `.env.example`).
 
 **Demo accounts:** `demo_teacher`, `demo_student`, `demo_staff` (+ `demo_student_2`–`_4`) — all `demo1234`.
+`demo_staff` has no Django admin access unless seeded with `--staff-superuser`; staff powers come from the `staff` group.
 
 ---
 
@@ -79,9 +81,10 @@ React      ──┘         ▲
 ```text
 config/settings.py            env-driven; DRF, CORS, JWT, MEDIA, integrations
 config/urls.py                root routes + api/ + progress/ + media (DEBUG)
-scheduling/models.py          Session, Booking, ClassOffering, TeacherPermission, StudioGlossary, …
+scheduling/models.py          Session, Booking, ClassOffering, TeacherPermission, StudioGlossary, StaffActionLog, …
                               (`ClassType` is legacy — use `ClassOffering` for new work)
-scheduling/services/          booking, membership, availability, classes, users, glossary, staff, teacher_permissions
+scheduling/services/          booking, membership, membership_admin, availability, classes, users,
+                              glossary, staff, staff_audit, teacher_permissions
 scheduling/api/               DRF views, staff_views, glossary_views, serializers, permissions
 scheduling/views/             HTML views (package)
 progress/models.py            SessionFeedback, ScoreDimension, HomeworkAssignment, HomeworkEntry
@@ -135,7 +138,15 @@ docs/glossary.md
 
 | Method | Path | Role |
 |--------|------|------|
-| GET | `staff/teachers/`, `staff/students/`, `staff/schedule/` | staff |
+| GET/POST | `staff/teachers/` (POST creates a teacher) | staff |
+| GET/POST | `staff/students/` (POST creates a student) | staff |
+| GET | `staff/schedule/` | staff |
+| POST | `staff/teachers/<id>/password/`, `staff/students/<id>/password/` | staff |
+| GET/POST | `staff/students/<id>/membership/` (comp or record a sale) | staff |
+| PATCH | `staff/students/<id>/membership/<mid>/` (tickets, expiry, cancel) | staff |
+| POST | `staff/bookings/<id>/cancel/` (with refund choice) | staff |
+| GET | `staff/payments/` (mode + Stripe status; no secrets) | staff |
+| GET | `staff/activity/` (staff override audit log) | staff |
 | GET | `staff/alerts/` | staff |
 | POST | `staff/alerts/mark-read/` | staff |
 | PATCH | `staff/teachers/<id>/`, `staff/students/<id>/` | staff |
@@ -145,6 +156,7 @@ docs/glossary.md
 | POST | `teacher/ai/suggest-feedback/` | teacher (+ `use_ai`) |
 | GET | `teacher/ai/status/` | teacher/staff |
 | POST | `staff/classes/` | staff |
+| GET/PATCH/DELETE | `staff/class-catalog/<kind>/<id>/` (rename / hide / delete roadmap entry) | staff |
 | `staff/teachers/<id>/sessions|classes|availability|permissions/…` | staff |
 
 ### Shared

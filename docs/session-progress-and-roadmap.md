@@ -1,10 +1,17 @@
 # Session progress & roadmap
 
-**Created:** 2026-07-06  
-**Branch:** `main` (large uncommitted working tree — ~49 modified files + new migrations/components)  
-**Audience:** Owner / developer reference after the latest build sprint
+**Branch:** `main`  
+**Audience:** Owner / developer reference — what’s done and what’s next
+
+**Last reviewed:** 2026-08-26 — roadmap reordered: **Functionality → Security → UI/UX**
 
 Use this alongside [`architecture-and-roadmap.md`](./architecture-and-roadmap.md), [`audit-remediation-plan.md`](./audit-remediation-plan.md), and [`future-features.md`](./future-features.md).
+
+**Priority order (current):**
+
+1. **Functionality** — role hierarchy (`staff` > `teacher` > `student`); staff has full studio control (“sandbox permission”) without Django admin
+2. **Security** — harden before widening staff powers or going fully public
+3. **UI/UX** — polish after behavior and permissions are consistent
 
 ---
 
@@ -12,9 +19,9 @@ Use this alongside [`architecture-and-roadmap.md`](./architecture-and-roadmap.md
 
 You have a **full-featured studio booking app**: Django + DRF backend, React SPA as the primary UI, role-based access (student / teacher / staff), memberships & tickets, homework & progress tracking, staff admin, and optional integrations (Stripe, Google, email).
 
-The **audit remediation plan (Phases 0–22) is marked complete** in project docs. On top of that baseline, your **current working tree** adds substantial product polish: mobile navigation, student self-registration, class catalog roadmap, availability-driven scheduling slots, open class requests, booking/request confirmation flows, Stripe checkout polling, timezone fixes, and Gmail SMTP setup notes.
+The **audit remediation plan (Phases 0–22) is marked complete** in project docs. Recent work includes Supabase + Render deploy (Gakko Studio), showcase seed, student home hub, booking UX polish, and staff dashboard alerts.
 
-**Nothing on this branch is committed yet.** Before deploying or sharing, run migrations, tests, and consider splitting into reviewable commits or PRs.
+**Live demo:** Render API + static frontend; Supabase Postgres; `demo_student` / `demo1234` with `--showcase` seed.
 
 ---
 
@@ -131,58 +138,130 @@ cd frontend && npm run build && cd ..
 
 ---
 
-## Part 4 — Roadmap (recommended next steps)
+## Part 4 — Roadmap (Functionality → Security → UI/UX)
 
-### Immediate (stabilize this sprint)
+### Tier 1 — Functionality (do first)
+
+**Goal:** `staff` > `teacher` > `student` is consistent everywhere. Staff can run the whole studio from the React app — same power as the sandbox, without `/admin/`.
+
+#### Role model (target)
+
+```text
+staff     → full studio control; bypasses teacher permission flags (teacher_can)
+teacher   → scoped to own students/sessions; capabilities gated by staff-granted flags
+student   → book, membership, progress, homework, own requests only
+```
+
+**Today:** Backend `teacher_can()` already returns `True` for staff. Gaps are missing APIs, missing staff UI, and a few flows that still require Django admin or env vars.
+
+#### 1A — Staff “sandbox permission” audit
+
+Full matrix: [`staff-sandbox-audit.md`](./staff-sandbox-audit.md). **All four phases are done** —
+no day-to-day studio operation needs Django admin or a shell. TICKET-002 → TICKET-007 are closed
+in [`learn/TICKETS.md`](./learn/TICKETS.md); TICKET-008 → TICKET-010 carry the leftovers.
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | **Role matrix doc + test pass** | **Done** — `staff-sandbox-audit.md` + `StaffSandboxAuditTests` |
+| 2 | **Staff delete everywhere teachers can** | **Done** (via staff → teacher drill-down) |
+| 3 | **Staff delete where only add exists** — class roadmap | **Done** — rename / hide / delete with in-use guards |
+| 4 | **Staff cancel any booking** | **Done** — `POST staff/bookings/<id>/cancel/` with a refund choice |
+| 5 | **Staff → Payments / Stripe** | **Done** — read-only `/staff/payments` (keys stay in env) |
+| 6 | **Staff manage integrations** — Google + email status | Open — payments panel is the pattern to copy |
+| 7 | **User lifecycle** | **Done** — staff create teachers *and* students, reset passwords, deactivate |
+| 8 | **Remove Django admin dependency** | **Done** — `demo_staff` not superuser; password reset was the last admin-only flow |
+| 9 | **Multi-role users** | Open — TICKET-009 |
+| 10 | **Teacher permission enforcement** | Open — TICKET-010 |
+
+**Money controls (Phase 2)** deliberately stop short of editing Stripe keys or issuing refunds:
+keys would have to be stored in the database, and Stripe's dashboard owns the real ledger.
+Cash and comped memberships are recorded as `Payment` rows with provider `staff` so reports
+still balance, and every override lands in the `/staff/activity` audit log.
+
+#### 1B — Teacher / student consistency
+
+| # | Task | Notes |
+|---|------|--------|
+| 11 | Teacher denied actions show clear 403 + UI disable | Match staff-granted flags in nav (hide what they can’t do) |
+| 12 | Class request history for students | Pending / approved / cancelled |
+| 13 | Staff view of all pending requests studio-wide | Optional aggregate beyond per-teacher drill-down |
+
+#### 1C — Integrations (functional, not polish)
+
+| Integration | Functional next step |
+|-------------|---------------------|
+| **Stripe** | Staff UI + webhook URL display; students checkout when live |
+| **Email** | Staff-visible mode (console / SMTP / provider) |
+| **Google** | Studio OAuth status; teachers connect calendar |
+| **Deploy** | Gakko Studio on Render + Supabase — **done**; document re-seed |
+
+#### Deferred (after Tier 1 stable)
+
+- Availability-first booking refactor (`future-features.md` §3)
+- Homework PDF markup, S3 media, Zoom, multi-tenant SaaS — see [`future-features.md`](./future-features.md)
+
+---
+
+### Tier 2 — Security (after staff powers expand)
+
+**Goal:** Safe to expose Gakko Studio publicly while staff has full sandbox control.
 
 | # | Task | Why |
 |---|------|-----|
-| 1 | **Commit or PR this work** | ~4k lines uncommitted; easy to lose context |
-| 2 | **Run full test suite + manual smoke test** | Register → membership → book → request class → teacher approve |
-| 3 | **Apply pending migrations on any other machine** | 0024–0027 required |
-| 4 | **Verify Gmail + Stripe in your `.env`** | Restart runserver; test one booking email and one checkout |
+| 1 | **`demo_staff` not superuser** on public demo | Superuser + public URL = admin risk |
+| 2 | **IDOR re-audit** after new staff delete/cancel endpoints | Every new staff write gets a test |
+| 3 | **Secrets hygiene** | Stripe/LLM keys: env preferred; if staff UI stores keys, encrypt + mask like LLM |
+| 4 | **Public demo guardrails** | `ALLOW_MOCK_PAYMENTS=true` only on demo; document prod values |
+| 5 | **CSP on frontend host** | Django CSP doesn’t cover Render static site |
+| 6 | **Rate limits review** | Register, login, checkout, staff destructive actions |
+| 7 | **JWT in sessionStorage** | Document trade-off; plan httpOnly cookies (`future-features.md` §9) when ready |
+| 8 | **Supabase + Render** | SSL required, no secrets in git, rotate if password pasted in chat |
+| 9 | **Upload / download auth** | Homework, blog — regression tests after changes |
+| 10 | **Stripe webhook** | Signature verify; idempotent fulfillment (already implemented — verify on live URL) |
 
-### Short term — UX quick wins (1–2 sessions)
+Reference: [`security.md`](./security.md), [`audit-remediation-plan.md`](./audit-remediation-plan.md).
 
-High impact, mostly frontend. See Part 5 for detail.
+---
 
-1. Loading states on calendar/list pages (sessions, bookings, class requests)
-2. Empty states with CTAs (“No bookings → Browse sessions”, “No tickets → Membership”)
-3. Fix `<a href>` → React `<Link>` on request-class link in sessions page
-4. Student home: **next upcoming lesson** card
-5. Class request **history with status** (pending / approved / cancelled)
-6. Replace `window.confirm` with in-app modals (cancel booking, deny request, delete availability)
-7. Mobile: scroll detail panel into view when selecting a calendar session
+### Tier 3 — UI/UX (after Tier 1–2)
 
-### Medium term — product (from `future-features.md`)
+Polish and delight — not permission or security fixes.
 
-| Priority | Feature | Effort |
-|----------|---------|--------|
-| 1 | Homework PDF/image markup (iPad-friendly) | Medium–High |
-| 2 | Production homework media (S3 or volume) | Medium |
-| 3 | **Availability-driven booking refactor** (session born on first book) | High |
-| 4 | Google Calendar sync (cancel events, ICS “Add to calendar”) | Low–Medium |
-| 5 | Real Zoom meetings | Medium |
-| 6 | Frontend Vitest + ESLint in CI | Medium |
-| 7 | High-contrast theme | Low |
+#### Done (showcase sprint)
 
-### Integrations & production (when you have creds + hosting)
+- Student home hub (next lesson, low tickets, pending requests)
+- Booking loading / empty states / upcoming vs past tabs
+- `<Link>` fix, membership link when out of tickets
+- Staff dashboard alerts (users / membership / financial)
+- Mobile nav shell
 
-| Integration | Today | Next |
-|-------------|-------|------|
-| **Email** | Console or Gmail SMTP | Production SMTP / transactional provider |
-| **Stripe** | Test checkout + webhook | Live keys, webhook on deployed URL |
-| **Google** | OAuth + placeholder Meet until consent | Production OAuth consent, token refresh |
-| **Deploy** | Docker Compose / Procfile | TLS, `MEDIA_ROOT` volume, env secrets |
+#### Remaining UX backlog
 
-### Architecture direction (longer term)
+| # | Task | Area |
+|---|------|------|
+| 1 | In-app confirm modals (replace `window.confirm`) | Global |
+| 2 | Shared toast + loading skeleton component | Global |
+| 3 | Class request status history + badges | Student |
+| 4 | Teacher home widget (today’s sessions, pending requests) | Teacher |
+| 5 | Nav badges (pending requests, unread alerts) | Teacher / staff |
+| 6 | Mobile scroll-to-panel on calendar select | Calendar pages |
+| 7 | Inbox, Profile, onboarding polish | Student / all |
+| 8 | Teacher approve/deny confirm modals | Teacher |
+| 9 | “Add to calendar” on booking success | Student |
+| 10 | High-contrast theme | Profile / themes |
+
+Detail: Part 5 below (audit table — treat **Done** rows as closed).
+
+---
+
+### Architecture direction (longer term — not current sprint)
 
 Per [`architecture-and-roadmap.md` §11](./architecture-and-roadmap.md):
 
 - **Today:** Teacher creates `Session` → student books.
 - **Target:** Student picks class + availability slot → session created on first booking.
 
-You’ve already laid groundwork (`scheduling_slots`, class requests, availability calendar). The refactor would unify “book open session” and “request custom time” into one availability-first flow.
+Groundwork exists (`scheduling_slots`, class requests). Defer until Tier 1 role/staff work is solid.
 
 ---
 
@@ -202,21 +281,21 @@ Review of the React app as of 2026-07-06. Grouped by impact.
 
 ### High-impact quick wins
 
-| Page / area | Gap |
-|-------------|-----|
-| `StudentSessionsPage` | No loading state; flashes empty before fetch |
-| `StudentBookingsPage` | No loading; empty state has no CTA; shows past bookings under “upcoming” |
-| `TeacherSessionsPage` | No loading or empty-state CTA to create session |
-| `TeacherClassRequestsPage` | No loading; dense forms on mobile; approve without confirm |
-| `StudentOpenSessionPanel` | “Not enough tickets” but no link to `/membership` |
-| `StudentSessionsPage` | Uses `<a href>` for request-class link (full page reload) |
-| `StudentHomeDashboard` | No next-lesson preview or pending-request summary |
-| `StudentRequestClassPage` | Pending-only list; no approved/cancelled history |
-| `TeacherAvailabilityPage` | Delete with no confirmation; no success feedback after save |
-| `InboxPage` | Minimal — no intro, loading, or polished empty state |
-| `ProfilePage` | Form blank until load; free-text timezone field |
-| `OnboardingChecklist` | Silent failure if API errors |
-| **Global** | `window.confirm` on some flows vs polished modals elsewhere |
+| Page / area | Gap | Status |
+|-------------|-----|--------|
+| `StudentSessionsPage` | Loading state | **Done** |
+| `StudentBookingsPage` | Loading; empty CTA; upcoming vs past | **Done** |
+| `StudentOpenSessionPanel` | Link to `/membership` when out of tickets | **Done** |
+| `StudentSessionsPage` | `<Link>` for request-class | **Done** |
+| `StudentHomeDashboard` | Next lesson + pending requests | **Done** |
+| `TeacherSessionsPage` | No loading or empty-state CTA to create session | Open |
+| `TeacherClassRequestsPage` | No loading; dense forms on mobile; approve without confirm | Open |
+| `StudentRequestClassPage` | Pending-only list; no approved/cancelled history | Open (Tier 1) |
+| `TeacherAvailabilityPage` | Delete with no confirmation; no success feedback after save | Open (Tier 3) |
+| `InboxPage` | Minimal — no intro, loading, or polished empty state | Open (Tier 3) |
+| `ProfilePage` | Form blank until load; free-text timezone field | Open (Tier 3) |
+| `OnboardingChecklist` | Silent failure if API errors | Open (Tier 3) |
+| **Global** | `window.confirm` on some flows vs polished modals elsewhere | Open (Tier 3) |
 
 ### Medium-term UX improvements
 
@@ -240,14 +319,14 @@ Review of the React app as of 2026-07-06. Grouped by impact.
 - Keyboard/a11y pass on modals (focus trap, screen reader announcements)
 - Past booking archive with filters
 
-### Suggested UX priority order
+### Suggested UX priority order (Tier 3 only — after Functionality + Security)
 
-1. Loading + empty-state CTAs on booking/calendar pages  
-2. `<Link>` fix + membership link when out of tickets  
-3. Student home upcoming booking + request status history  
-4. Teacher approve confirm + availability delete confirm  
-5. Mobile scroll-to-panel on calendar selection  
-6. Shared toast + confirm-dialog components  
+1. In-app confirm modals + shared toast component  
+2. Class request status history (also tracked in Tier 1)  
+3. Teacher home widget + nav badges  
+4. Mobile scroll-to-panel on calendar selection  
+5. Inbox / Profile / onboarding polish  
+6. High-contrast theme  
 
 ---
 
@@ -295,4 +374,4 @@ Do not rewrite everything at once.
 
 ---
 
-*Last reviewed against working tree on 2026-07-06.*
+*Last reviewed against working tree on 2026-08-26.*

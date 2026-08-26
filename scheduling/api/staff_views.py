@@ -14,6 +14,11 @@ from scheduling.api.serializers import (
     MembershipPlanSerializer,
     SessionSerializer,
     SpecialAvailabilitySerializer,
+    StaffBookingCancelSerializer,
+    StaffMembershipGrantSerializer,
+    StaffMembershipUpdateSerializer,
+    StaffPasswordResetSerializer,
+    StaffUserCreateSerializer,
     StaffUserUpdateSerializer,
     StudentOptionSerializer,
     TeacherOptionSerializer,
@@ -33,11 +38,29 @@ from scheduling.services.availability import (
     session_within_availability,
 )
 from scheduling.services.meetings import create_meeting_link
+from scheduling.services.membership_admin import (
+    adjust_tickets,
+    grant_membership,
+    student_membership_overview,
+    update_membership,
+)
+from scheduling.services.payments import payment_settings_status
 from scheduling.services.reports import staff_reports
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
-from scheduling.services.staff import get_teacher, list_teachers
+from scheduling.services.staff import (
+    get_teacher,
+    list_teachers,
+    staff_cancel_booking,
+    staff_reset_password,
+)
 from scheduling.services.staff_alerts import list_staff_alerts, mark_alerts_read
-from scheduling.services.users import get_student, list_students, update_user_account
+from scheduling.services.staff_audit import list_staff_actions
+from scheduling.services.users import (
+    create_studio_user,
+    get_student,
+    list_students,
+    update_user_account,
+)
 
 User = get_user_model()
 
@@ -48,6 +71,19 @@ class StaffTeacherListView(generics.ListAPIView):
 
     def get_queryset(self):
         return list_teachers()
+
+    def post(self, request):
+        """Staff creates a new teacher account."""
+        serializer = StaffUserCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        teacher, error = create_studio_user(
+            role='teacher',
+            actor=request.user,
+            **serializer.validated_data,
+        )
+        if error:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(TeacherOptionSerializer(teacher).data, status=status.HTTP_201_CREATED)
 
 
 class StaffOverallScheduleView(generics.ListAPIView):
@@ -472,6 +508,181 @@ class StaffStudentListView(generics.ListAPIView):
 
     def get_queryset(self):
         return list_students()
+
+    def post(self, request):
+        """Staff creates a student who signed up in person."""
+        serializer = StaffUserCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        student, error = create_studio_user(
+            role='student',
+            actor=request.user,
+            **serializer.validated_data,
+        )
+        if error:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(StudentOptionSerializer(student).data, status=status.HTTP_201_CREATED)
+
+
+class StaffPasswordResetMixin:
+    """Staff sets a temporary password for a teacher or student."""
+
+    permission_classes = [IsStaff]
+    url_kwarg = None
+
+    def get_target(self, user_id):
+        raise NotImplementedError
+
+    def post(self, request, **kwargs):
+        target = self.get_target(kwargs[self.url_kwarg])
+        if target is None:
+            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StaffPasswordResetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ok, error = staff_reset_password(
+            request.user,
+            target,
+            serializer.validated_data['password'],
+            note=serializer.validated_data.get('note', ''),
+        )
+        if not ok:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'detail': f'Password updated for {target.username}. Share it and ask them to change it.',
+        })
+
+
+class StaffTeacherPasswordResetView(StaffPasswordResetMixin, APIView):
+    url_kwarg = 'teacher_id'
+
+    def get_target(self, user_id):
+        return get_teacher(user_id)
+
+
+class StaffStudentPasswordResetView(StaffPasswordResetMixin, APIView):
+    url_kwarg = 'student_id'
+
+    def get_target(self, user_id):
+        return get_student(user_id)
+
+
+class StaffStudentMembershipView(APIView):
+    """Read a student's membership state and comp / record a plan for them."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request, student_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        payload = student_membership_overview(student)
+        payload['plans'] = MembershipPlanSerializer(
+            MembershipPlan.objects.filter(is_active=True).prefetch_related('allowed_classes'),
+            many=True,
+        ).data
+        payload['recent_actions'] = list_staff_actions(limit=10, target_user=student)
+        return Response(payload)
+
+    def post(self, request, student_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StaffMembershipGrantSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload, error = grant_membership(
+            request.user,
+            student,
+            plan_id=serializer.validated_data['plan_id'],
+            months=serializer.validated_data.get('months', 1),
+            amount_cents=serializer.validated_data.get('amount_cents', 0),
+            note=serializer.validated_data.get('note', ''),
+        )
+        if error:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class StaffStudentMembershipDetailView(APIView):
+    """Adjust tickets, cancel, reactivate, or extend one membership."""
+
+    permission_classes = [IsStaff]
+
+    def patch(self, request, student_id, membership_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StaffMembershipUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        note = data.get('note', '')
+
+        if 'tickets_delta' in data:
+            payload, error = adjust_tickets(
+                request.user,
+                student,
+                membership_id=membership_id,
+                delta=data['tickets_delta'],
+                note=note,
+            )
+        else:
+            payload, error = update_membership(
+                request.user,
+                student,
+                membership_id=membership_id,
+                is_active=data.get('is_active'),
+                valid_until=data.get('valid_until'),
+                extend_days=data.get('extend_days'),
+                note=note,
+            )
+        if error:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+
+class StaffBookingCancelView(APIView):
+    """Staff cancels a student's booking, with or without refunding the ticket."""
+
+    permission_classes = [IsStaff]
+
+    def post(self, request, booking_id):
+        serializer = StaffBookingCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload, error = staff_cancel_booking(
+            request.user,
+            booking_id,
+            refund=serializer.validated_data.get('refund', True),
+            note=serializer.validated_data.get('note', ''),
+        )
+        if error:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error == 'Booking not found.'
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response({'detail': error}, status=code)
+        return Response(payload)
+
+
+class StaffPaymentSettingsView(APIView):
+    """Read-only view of how payments are configured (never returns secret keys)."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        base_url = f'{request.scheme}://{request.get_host()}'
+        return Response(payment_settings_status(base_url=base_url))
+
+
+class StaffActivityLogView(APIView):
+    """Audit trail of staff overrides."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        try:
+            limit = int(request.query_params.get('limit', 50))
+        except (TypeError, ValueError):
+            limit = 50
+        return Response({'actions': list_staff_actions(limit=limit)})
 
 
 class StaffStudentDetailView(APIView):

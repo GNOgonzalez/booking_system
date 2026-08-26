@@ -16,6 +16,7 @@ from scheduling.models import (
     MembershipPlan,
     Payment,
     Session,
+    StaffActionLog,
     StaffAlert,
 )
 from scheduling.services.blog import create_blog_post
@@ -2255,3 +2256,693 @@ class ShowcaseSeedTests(TestCase):
                 session__start_time__gte=timezone.now(),
             ).exists()
         )
+
+    def test_demo_staff_has_no_django_admin_access_by_default(self):
+        from django.core.management import call_command
+
+        call_command('bootstrap_sandbox', '--demo')
+        staff = User.objects.get(username='demo_staff')
+        self.assertFalse(staff.is_superuser)
+        self.assertFalse(staff.is_staff)
+        self.assertTrue(staff.groups.filter(name='staff').exists())
+
+    def test_staff_superuser_flag_grants_admin_access(self):
+        from django.core.management import call_command
+
+        call_command('bootstrap_sandbox', '--demo', '--staff-superuser')
+        staff = User.objects.get(username='demo_staff')
+        self.assertTrue(staff.is_superuser)
+        self.assertTrue(staff.is_staff)
+
+
+class StaffSandboxAuditTests(TestCase):
+    """Staff can run the studio from the app: manage the roadmap and add teachers."""
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_sandbox', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_sandbox', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _seed_roadmap(self):
+        from scheduling.services.class_catalog import (
+            bulk_add_catalog_topics,
+            create_catalog_focus,
+            create_catalog_level,
+            create_catalog_subject,
+        )
+
+        subject, _ = create_catalog_subject('Japanese')
+        level, _ = create_catalog_level(subject.id, 'Beginner')
+        focus, _ = create_catalog_focus(level.id, 'Grammar')
+        bulk_add_catalog_topics(focus.id, 'Verbs')
+        return subject, level, focus, focus.topics.first()
+
+    def test_staff_deletes_unused_roadmap_entry(self):
+        subject, level, focus, _ = self._seed_roadmap()
+        res = self.client.delete(
+            f'/api/staff/class-catalog/focus/{focus.id}/',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(level.focuses.filter(pk=focus.id).exists())
+
+    def test_delete_blocked_while_a_class_uses_the_entry(self):
+        subject, level, focus, _ = self._seed_roadmap()
+        ClassOffering.objects.create(
+            teacher=self.teacher,
+            subject='Japanese',
+            level='Beginner',
+            focus='Grammar',
+        )
+        res = self.client.delete(
+            f'/api/staff/class-catalog/subject/{subject.id}/',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('Deactivate it instead', res.json()['detail'])
+
+    def test_deactivate_hides_entry_from_teacher_pickers(self):
+        subject, _, _, _ = self._seed_roadmap()
+        res = self.client.patch(
+            f'/api/staff/class-catalog/subject/{subject.id}/',
+            {'is_active': False},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        tree = self.client.get('/api/class-catalog/', **self._auth(self.teacher)).json()
+        self.assertEqual(tree['subjects'], [])
+
+    def test_rename_keeps_existing_classes_in_sync(self):
+        _, level, _, _ = self._seed_roadmap()
+        offering = ClassOffering.objects.create(
+            teacher=self.teacher,
+            subject='Japanese',
+            level='Beginner',
+            focus='Grammar',
+        )
+        res = self.client.patch(
+            f'/api/staff/class-catalog/level/{level.id}/',
+            {'name': 'Foundations'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        offering.refresh_from_db()
+        self.assertEqual(offering.level, 'Foundations')
+
+    def test_rename_rejects_duplicate_sibling(self):
+        subject, level, _, _ = self._seed_roadmap()
+        from scheduling.services.class_catalog import create_catalog_level
+
+        create_catalog_level(subject.id, 'Advanced')
+        res = self.client.patch(
+            f'/api/staff/class-catalog/level/{level.id}/',
+            {'name': 'Advanced'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_roadmap_edits_require_staff(self):
+        subject, _, _, _ = self._seed_roadmap()
+        res = self.client.delete(
+            f'/api/staff/class-catalog/subject/{subject.id}/',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_staff_creates_teacher_with_all_permissions(self):
+        res = self.client.post(
+            '/api/staff/teachers/',
+            {
+                'username': 'new_teacher',
+                'email': 'new@example.com',
+                'display_name': 'Aiko',
+                'password': 'studio-pass-9182',
+            },
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 201)
+        created = User.objects.get(username='new_teacher')
+        self.assertTrue(created.groups.filter(name='teacher').exists())
+        self.assertFalse(created.is_staff)
+
+        from scheduling.services.teacher_permissions import teacher_can
+
+        self.assertTrue(teacher_can(created, 'manage_schedule'))
+        self.assertTrue(teacher_can(created, 'write_reports'))
+
+        listed = self.client.get('/api/staff/teachers/', **self._auth(self.staff)).json()
+        self.assertIn('new_teacher', [row['username'] for row in listed])
+
+    def test_create_teacher_rejects_weak_password_and_duplicate_username(self):
+        weak = self.client.post(
+            '/api/staff/teachers/',
+            {'username': 'another_teacher', 'password': '123'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(weak.status_code, 400)
+        self.assertFalse(User.objects.filter(username='another_teacher').exists())
+
+        duplicate = self.client.post(
+            '/api/staff/teachers/',
+            {'username': 'teacher_sandbox', 'password': 'studio-pass-9182'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(duplicate.status_code, 400)
+
+    def test_create_teacher_requires_staff(self):
+        res = self.client.post(
+            '/api/staff/teachers/',
+            {'username': 'sneaky', 'password': 'studio-pass-9182'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(User.objects.filter(username='sneaky').exists())
+
+
+class StaffUserAdminTests(TestCase):
+    """Staff creates students and resets passwords without Django admin."""
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_users', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_users', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('student_users', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_staff_creates_student(self):
+        res = self.client.post(
+            '/api/staff/students/',
+            {
+                'username': 'walk_in',
+                'email': 'walkin@example.com',
+                'display_name': 'Walk In',
+                'password': 'studio-pass-9182',
+            },
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 201)
+        created = User.objects.get(username='walk_in')
+        self.assertTrue(created.groups.filter(name='student').exists())
+        self.assertTrue(
+            StaffActionLog.objects.filter(
+                action=StaffActionLog.ACTION_USER_CREATED,
+                target_user=created,
+                actor=self.staff,
+            ).exists()
+        )
+
+    def test_create_student_requires_staff(self):
+        res = self.client.post(
+            '/api/staff/students/',
+            {'username': 'nope', 'password': 'studio-pass-9182'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(User.objects.filter(username='nope').exists())
+
+    def test_staff_resets_student_password(self):
+        res = self.client.post(
+            f'/api/staff/students/{self.student.id}/password/',
+            {'password': 'studio-pass-9182', 'note': 'forgot at front desk'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+
+        token_res = self.client.post(
+            '/api/auth/token/',
+            {'username': 'student_users', 'password': 'studio-pass-9182'},
+            content_type='application/json',
+        )
+        self.assertEqual(token_res.status_code, 200)
+        entry = StaffActionLog.objects.get(action=StaffActionLog.ACTION_PASSWORD_RESET)
+        self.assertEqual(entry.target_user, self.student)
+        self.assertEqual(entry.note, 'forgot at front desk')
+
+    def test_staff_resets_teacher_password(self):
+        res = self.client.post(
+            f'/api/staff/teachers/{self.teacher.id}/password/',
+            {'password': 'studio-pass-9182'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.teacher.refresh_from_db()
+        self.assertTrue(self.teacher.check_password('studio-pass-9182'))
+
+    def test_password_reset_rejects_weak_password(self):
+        res = self.client.post(
+            f'/api/staff/students/{self.student.id}/password/',
+            {'password': '123'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.check_password('pass'))
+
+    def test_staff_cannot_reset_another_staff_password(self):
+        other = User.objects.create_user('staff_two', password='pass')
+        other.groups.add(Group.objects.get(name='staff'))
+        # Staff accounts are not teachers or students, so the lookup 404s before the guard.
+        res = self.client.post(
+            f'/api/staff/students/{other.id}/password/',
+            {'password': 'studio-pass-9182'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 404)
+        other.refresh_from_db()
+        self.assertTrue(other.check_password('pass'))
+
+    def test_password_reset_requires_staff(self):
+        res = self.client.post(
+            f'/api/staff/students/{self.student.id}/password/',
+            {'password': 'studio-pass-9182'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+
+class StaffMembershipAdminTests(TestCase):
+    """Staff can comp a plan, fix a ticket balance, extend, and cancel."""
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_money', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.student = User.objects.create_user('student_money', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.plan = MembershipPlan.objects.create(
+            name='Japanese',
+            price_cents=5000,
+            ticket_allowance=8,
+            billing_period_days=30,
+        )
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _grant(self, **overrides):
+        payload = {'plan_id': self.plan.id, 'months': 1}
+        payload.update(overrides)
+        return self.client.post(
+            f'/api/staff/students/{self.student.id}/membership/',
+            payload,
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+
+    def test_overview_is_empty_before_any_membership(self):
+        res = self.client.get(
+            f'/api/staff/students/{self.student.id}/membership/',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertFalse(data['has_active_membership'])
+        self.assertEqual(data['tickets_remaining'], 0)
+        self.assertEqual(data['memberships'], [])
+        self.assertIn('plans', data)
+
+    def test_staff_comps_a_membership(self):
+        res = self._grant(note='comped for referral')
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertTrue(data['has_active_membership'])
+        self.assertEqual(data['tickets_remaining'], 8)
+
+        payment = Payment.objects.get(user=self.student)
+        self.assertEqual(payment.provider, Payment.PROVIDER_STAFF)
+        self.assertEqual(payment.amount_cents, 0)
+        entry = StaffActionLog.objects.get(action=StaffActionLog.ACTION_MEMBERSHIP_GRANTED)
+        self.assertEqual(entry.note, 'comped for referral')
+        self.assertEqual(entry.detail['months'], 1)
+
+    def test_staff_records_a_cash_sale(self):
+        res = self._grant(months=2, amount_cents=10000)
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()['tickets_remaining'], 16)
+        payment = Payment.objects.get(user=self.student)
+        self.assertEqual(payment.amount_cents, 10000)
+        self.assertEqual(payment.quantity, 2)
+
+    def test_grant_rejects_inactive_plan(self):
+        self.plan.is_active = False
+        self.plan.save(update_fields=['is_active'])
+        res = self._grant()
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(Membership.objects.filter(user=self.student).exists())
+
+    def test_staff_adjusts_tickets_up_and_down(self):
+        self._grant()
+        membership = Membership.objects.get(user=self.student)
+
+        add = self.client.patch(
+            f'/api/staff/students/{self.student.id}/membership/{membership.id}/',
+            {'tickets_delta': 3, 'note': 'make-up lesson'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(add.status_code, 200)
+        self.assertEqual(add.json()['tickets_remaining'], 11)
+
+        remove = self.client.patch(
+            f'/api/staff/students/{self.student.id}/membership/{membership.id}/',
+            {'tickets_delta': -5},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(remove.status_code, 200)
+        self.assertEqual(remove.json()['tickets_remaining'], 6)
+
+        entries = StaffActionLog.objects.filter(action=StaffActionLog.ACTION_TICKETS_ADJUSTED)
+        self.assertEqual(entries.count(), 2)
+
+    def test_ticket_adjustment_cannot_go_negative(self):
+        self._grant()
+        membership = Membership.objects.get(user=self.student)
+        res = self.client.patch(
+            f'/api/staff/students/{self.student.id}/membership/{membership.id}/',
+            {'tickets_delta': -99},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+        membership.refresh_from_db()
+        self.assertEqual(membership.tickets_remaining, 8)
+
+    def test_staff_cancels_and_reactivates_membership(self):
+        self._grant()
+        membership = Membership.objects.get(user=self.student)
+        url = f'/api/staff/students/{self.student.id}/membership/{membership.id}/'
+
+        cancel = self.client.patch(
+            url,
+            {'is_active': False, 'note': 'moved away'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(cancel.status_code, 200)
+        self.assertFalse(cancel.json()['has_active_membership'])
+
+        restore = self.client.patch(
+            url,
+            {'is_active': True},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(restore.status_code, 200)
+        self.assertTrue(restore.json()['has_active_membership'])
+
+    def test_staff_extends_expiry(self):
+        self._grant()
+        membership = Membership.objects.get(user=self.student)
+        before = membership.valid_until
+        res = self.client.patch(
+            f'/api/staff/students/{self.student.id}/membership/{membership.id}/',
+            {'extend_days': 14},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        membership.refresh_from_db()
+        self.assertEqual(membership.valid_until, before + timedelta(days=14))
+
+    def test_membership_update_needs_an_action(self):
+        self._grant()
+        membership = Membership.objects.get(user=self.student)
+        res = self.client.patch(
+            f'/api/staff/students/{self.student.id}/membership/{membership.id}/',
+            {'note': 'nothing to do'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_membership_admin_requires_staff(self):
+        res = self.client.get(
+            f'/api/staff/students/{self.student.id}/membership/',
+            **self._auth(self.student),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_membership_of_another_student_is_not_reachable(self):
+        other = User.objects.create_user('other_student', password='pass')
+        other.groups.add(Group.objects.get(name='student'))
+        self._grant()
+        membership = Membership.objects.get(user=self.student)
+        res = self.client.patch(
+            f'/api/staff/students/{other.id}/membership/{membership.id}/',
+            {'tickets_delta': 5},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+
+
+class StaffBookingOverrideTests(TestCase):
+    """Staff cancels a student's booking, choosing whether the ticket comes back."""
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_booking', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_booking', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('student_booking', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.plan = MembershipPlan.objects.create(name='All access', price_cents=1000, ticket_allowance=10)
+        self.membership = Membership.objects.create(
+            user=self.student,
+            plan=self.plan,
+            is_active=True,
+            tickets_remaining=5,
+        )
+        self.session = Session.objects.create(
+            teacher=self.teacher,
+            title='Grammar drill',
+            start_time=timezone.now() + timedelta(days=2),
+            end_time=timezone.now() + timedelta(days=2, hours=1),
+            capacity=4,
+            status='open',
+        )
+        self.booking = Booking.objects.create(
+            student=self.student,
+            session=self.session,
+            membership=self.membership,
+            status='confirmed',
+            tickets_spent=1,
+        )
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_staff_cancels_with_refund(self):
+        res = self.client.post(
+            f'/api/staff/bookings/{self.booking.id}/cancel/',
+            {'refund': True, 'note': 'teacher sick'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()['refunded'])
+        self.booking.refresh_from_db()
+        self.membership.refresh_from_db()
+        self.assertEqual(self.booking.status, 'cancelled')
+        self.assertEqual(self.membership.tickets_remaining, 6)
+        entry = StaffActionLog.objects.get(action=StaffActionLog.ACTION_BOOKING_CANCELLED)
+        self.assertEqual(entry.target_user, self.student)
+        self.assertTrue(entry.detail['refunded'])
+
+    def test_staff_cancels_without_refund(self):
+        res = self.client.post(
+            f'/api/staff/bookings/{self.booking.id}/cancel/',
+            {'refund': False},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.json()['refunded'])
+        self.membership.refresh_from_db()
+        self.assertEqual(self.membership.tickets_remaining, 5)
+
+    def test_cancelling_twice_is_rejected(self):
+        self.client.post(
+            f'/api/staff/bookings/{self.booking.id}/cancel/',
+            {'refund': True},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        again = self.client.post(
+            f'/api/staff/bookings/{self.booking.id}/cancel/',
+            {'refund': True},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(again.status_code, 400)
+        self.membership.refresh_from_db()
+        self.assertEqual(self.membership.tickets_remaining, 6)
+
+    def test_missing_booking_returns_404(self):
+        res = self.client.post(
+            '/api/staff/bookings/9999/cancel/',
+            {'refund': True},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 404)
+
+    def test_booking_cancel_requires_staff(self):
+        res = self.client.post(
+            f'/api/staff/bookings/{self.booking.id}/cancel/',
+            {'refund': True},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, 'confirmed')
+
+    def test_student_self_cancel_still_refunds(self):
+        res = self.client.post(
+            f'/api/bookings/{self.booking.id}/cancel/',
+            content_type='application/json',
+            **self._auth(self.student),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.membership.refresh_from_db()
+        self.assertEqual(self.membership.tickets_remaining, 6)
+
+
+class StaffPaymentSettingsTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_pay', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.student = User.objects.create_user('student_pay', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_mock_mode_reported_without_stripe(self):
+        res = self.client.get('/api/staff/payments/', **self._auth(self.staff))
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['mode'], 'mock')
+        self.assertFalse(data['is_live'])
+        self.assertFalse(data['stripe']['secret_key_configured'])
+        self.assertIn('/api/payments/stripe/webhook/', data['stripe']['webhook_url'])
+
+    @override_settings(
+        STRIPE={
+            'SECRET_KEY': 'sk_test_51ABCDEFghijklmnop',
+            'PUBLISHABLE_KEY': 'pk_test_123',
+            'WEBHOOK_SECRET': 'whsec_123',
+            'ENABLED': True,
+        },
+    )
+    def test_live_mode_masks_the_secret_key(self):
+        res = self.client.get('/api/staff/payments/', **self._auth(self.staff))
+        data = res.json()
+        self.assertEqual(data['mode'], 'stripe')
+        self.assertTrue(data['is_live'])
+        self.assertTrue(data['stripe']['webhook_secret_configured'])
+        self.assertNotIn('sk_test_51ABCDEFghijklmnop', res.content.decode())
+        self.assertTrue(data['stripe']['secret_key_hint'].endswith('mnop'))
+
+    def test_payment_settings_require_staff(self):
+        res = self.client.get('/api/staff/payments/', **self._auth(self.student))
+        self.assertEqual(res.status_code, 403)
+
+
+class StaffActivityLogTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_log', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.student = User.objects.create_user('student_log', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_activity_log_lists_staff_overrides(self):
+        self.client.post(
+            f'/api/staff/students/{self.student.id}/password/',
+            {'password': 'studio-pass-9182', 'note': 'front desk'},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        res = self.client.get('/api/staff/activity/', **self._auth(self.staff))
+        self.assertEqual(res.status_code, 200)
+        actions = res.json()['actions']
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]['action'], StaffActionLog.ACTION_PASSWORD_RESET)
+        self.assertEqual(actions[0]['actor'], 'staff_log')
+        self.assertEqual(actions[0]['target_user'], 'student_log')
+        self.assertEqual(actions[0]['note'], 'front desk')
+
+    def test_activity_log_requires_staff(self):
+        res = self.client.get('/api/staff/activity/', **self._auth(self.student))
+        self.assertEqual(res.status_code, 403)

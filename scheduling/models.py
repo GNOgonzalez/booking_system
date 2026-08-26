@@ -541,9 +541,11 @@ class Payment(models.Model):
 
     PROVIDER_MOCK = 'mock'
     PROVIDER_STRIPE = 'stripe'
+    PROVIDER_STAFF = 'staff'
     PROVIDER_CHOICES = [
         (PROVIDER_MOCK, 'Mock'),
         (PROVIDER_STRIPE, 'Stripe'),
+        (PROVIDER_STAFF, 'Recorded by staff'),
     ]
 
     STATUS_PENDING = 'pending'
@@ -837,3 +839,52 @@ class StaffAlertRead(models.Model):
 
     def __str__(self):
         return f'{self.user_id} read alert {self.alert_id}'
+
+
+class StaffActionLog(models.Model):
+    """Audit trail for staff overrides — who changed what, for whom, and when."""
+
+    ACTION_USER_CREATED = 'user_created'
+    ACTION_PASSWORD_RESET = 'password_reset'
+    ACTION_MEMBERSHIP_GRANTED = 'membership_granted'
+    ACTION_MEMBERSHIP_UPDATED = 'membership_updated'
+    ACTION_TICKETS_ADJUSTED = 'tickets_adjusted'
+    ACTION_BOOKING_CANCELLED = 'booking_cancelled'
+    ACTION_CHOICES = [
+        (ACTION_USER_CREATED, 'User created'),
+        (ACTION_PASSWORD_RESET, 'Password reset'),
+        (ACTION_MEMBERSHIP_GRANTED, 'Membership granted'),
+        (ACTION_MEMBERSHIP_UPDATED, 'Membership updated'),
+        (ACTION_TICKETS_ADJUSTED, 'Tickets adjusted'),
+        (ACTION_BOOKING_CANCELLED, 'Booking cancelled'),
+    ]
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staff_actions',
+    )
+    action = models.CharField(max_length=40, choices=ACTION_CHOICES, db_index=True)
+    target_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staff_actions_received',
+    )
+    summary = models.CharField(max_length=300)
+    detail = models.JSONField(default=dict, blank=True)
+    note = models.CharField(
+        max_length=300,
+        blank=True,
+        help_text='Optional reason staff typed when making the change.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.action} — {self.summary}'

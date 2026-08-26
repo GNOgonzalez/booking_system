@@ -61,6 +61,16 @@ export default function StaffDashboardPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [markingRead, setMarkingRead] = useState(false)
+  const [showAddTeacher, setShowAddTeacher] = useState(false)
+  const [newTeacher, setNewTeacher] = useState({
+    username: '',
+    email: '',
+    display_name: '',
+    password: '',
+  })
+  const [creating, setCreating] = useState(false)
+  const [resettingId, setResettingId] = useState(null)
+  const [newPassword, setNewPassword] = useState('')
 
   const load = () => {
     Promise.all([
@@ -86,6 +96,44 @@ export default function StaffDashboardPage() {
       })
       setMessage(`${teacher.username} marked ${teacher.is_active ? 'inactive' : 'active'}.`)
       load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const createTeacher = async (e) => {
+    e.preventDefault()
+    setError('')
+    setMessage('')
+    setCreating(true)
+    try {
+      const created = await apiFetch('/api/staff/teachers/', {
+        method: 'POST',
+        body: JSON.stringify(newTeacher),
+      })
+      setNewTeacher({ username: '', email: '', display_name: '', password: '' })
+      setShowAddTeacher(false)
+      setMessage(`${created.username} added. All ${label('teacher').toLowerCase()} permissions are enabled — adjust them under Permissions.`)
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const resetPassword = async (e, teacher) => {
+    e.preventDefault()
+    setError('')
+    setMessage('')
+    try {
+      const data = await apiFetch(`/api/staff/teachers/${teacher.id}/password/`, {
+        method: 'POST',
+        body: JSON.stringify({ password: newPassword }),
+      })
+      setResettingId(null)
+      setNewPassword('')
+      setMessage(data.detail)
     } catch (err) {
       setError(err.message)
     }
@@ -179,8 +227,22 @@ export default function StaffDashboardPage() {
 
       <div className="card">
         <div className="card-title">{labels('student')}</div>
-        <p className="card-meta">Activate or deactivate {label('student').toLowerCase()} accounts.</p>
+        <p className="card-meta">
+          Add accounts, grant memberships and tickets, cancel bookings, and reset passwords.
+        </p>
         <Link to="/staff/students" className="btn secondary">Manage {labels('student').toLowerCase()}</Link>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Payments</div>
+        <p className="card-meta">Whether Stripe is live or checkout is mocked, and the webhook URL to paste into Stripe.</p>
+        <Link to="/staff/payments" className="btn secondary">View payment settings</Link>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Staff activity</div>
+        <p className="card-meta">Audit trail of every staff override — memberships, tickets, bookings, passwords.</p>
+        <Link to="/staff/activity" className="btn secondary">View activity log</Link>
       </div>
 
       <div className="card">
@@ -227,7 +289,68 @@ export default function StaffDashboardPage() {
         <Link to="/staff/ai" className="btn secondary">Configure AI</Link>
       </div>
 
-      <h2 style={{ marginTop: '1.5rem' }}>{labels('teacher')}</h2>
+      <div className="card-row" style={{ marginTop: '1.5rem' }}>
+        <h2>{labels('teacher')}</h2>
+        <button
+          type="button"
+          className={showAddTeacher ? 'secondary' : ''}
+          onClick={() => setShowAddTeacher((open) => !open)}
+        >
+          {showAddTeacher ? 'Cancel' : `Add ${label('teacher').toLowerCase()}`}
+        </button>
+      </div>
+
+      {showAddTeacher && (
+        <form onSubmit={createTeacher} className="card">
+          <div className="card-title">New {label('teacher').toLowerCase()}</div>
+          <p className="card-meta">
+            Share these credentials with them; they can change the password under Account.
+          </p>
+          <div className="row">
+            <div className="field grow">
+              <label>Username</label>
+              <input
+                value={newTeacher.username}
+                onChange={(e) => setNewTeacher({ ...newTeacher, username: e.target.value })}
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div className="field grow">
+              <label>Email (optional)</label>
+              <input
+                type="email"
+                value={newTeacher.email}
+                onChange={(e) => setNewTeacher({ ...newTeacher, email: e.target.value })}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div className="field grow">
+              <label>Display name (optional)</label>
+              <input
+                value={newTeacher.display_name}
+                onChange={(e) => setNewTeacher({ ...newTeacher, display_name: e.target.value })}
+              />
+            </div>
+            <div className="field grow">
+              <label>Temporary password</label>
+              <input
+                type="password"
+                value={newTeacher.password}
+                onChange={(e) => setNewTeacher({ ...newTeacher, password: e.target.value })}
+                autoComplete="new-password"
+                required
+              />
+            </div>
+          </div>
+          <button type="submit" disabled={creating}>
+            {creating ? 'Creating…' : `Create ${label('teacher').toLowerCase()}`}
+          </button>
+        </form>
+      )}
+
       {teachers.map((teacher) => (
         <div key={teacher.id} className={`card staff-teacher-card${teacher.is_active ? '' : ' card--inactive'}`}>
           <div className="card-row">
@@ -247,6 +370,16 @@ export default function StaffDashboardPage() {
               </Link>
               <button
                 type="button"
+                className="ghost"
+                onClick={() => {
+                  setResettingId(resettingId === teacher.id ? null : teacher.id)
+                  setNewPassword('')
+                }}
+              >
+                Reset password
+              </button>
+              <button
+                type="button"
                 className={teacher.is_active ? 'danger' : 'secondary'}
                 onClick={() => toggleActive(teacher)}
               >
@@ -254,10 +387,34 @@ export default function StaffDashboardPage() {
               </button>
             </div>
           </div>
+          {resettingId === teacher.id && (
+            <form onSubmit={(e) => resetPassword(e, teacher)} className="row">
+              <div className="field grow">
+                <label>Temporary password for {teacher.username}</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+              <div className="field" style={{ alignSelf: 'end' }}>
+                <button type="submit">Set password</button>
+              </div>
+              <div className="field" style={{ alignSelf: 'end' }}>
+                <button type="button" className="secondary" onClick={() => setResettingId(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       ))}
       {!teachers.length && !error && (
-        <p className="card-meta">No teachers found. Create a user in the teacher group via Django admin.</p>
+        <p className="card-meta">
+          No {labels('teacher').toLowerCase()} yet. Use <strong>Add {label('teacher').toLowerCase()}</strong> above to create one.
+        </p>
       )}
     </div>
   )

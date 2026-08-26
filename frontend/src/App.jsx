@@ -30,6 +30,9 @@ const StaffTeacherLayout = lazy(() => import('./pages/StaffTeacherLayout.jsx'))
 const StaffClassCatalogPage = lazy(() => import('./pages/StaffClassCatalogPage.jsx'))
 const StaffCreateClassPage = lazy(() => import('./pages/StaffCreateClassPage.jsx'))
 const StaffStudentsPage = lazy(() => import('./pages/StaffStudentsPage.jsx'))
+const StaffStudentMembershipPage = lazy(() => import('./pages/StaffStudentMembershipPage.jsx'))
+const StaffPaymentsPage = lazy(() => import('./pages/StaffPaymentsPage.jsx'))
+const StaffActivityPage = lazy(() => import('./pages/StaffActivityPage.jsx'))
 const StaffTeacherPermissionsPage = lazy(() => import('./pages/StaffTeacherPermissionsPage.jsx'))
 const InboxPage = lazy(() => import('./pages/InboxPage.jsx'))
 const CurriculumPage = lazy(() => import('./pages/CurriculumPage.jsx'))
@@ -112,7 +115,9 @@ function Sidebar({ me, onLogout, onClose }) {
           <NavLink to="/staff/class-catalog" className="nav-link">Class roadmap</NavLink>
           <NavLink to="/staff/students" className="nav-link">{labels('student')}</NavLink>
           <NavLink to="/staff/memberships" className="nav-link">Memberships</NavLink>
+          <NavLink to="/staff/payments" className="nav-link">Payments</NavLink>
           <NavLink to="/staff/reports" className="nav-link">Reports</NavLink>
+          <NavLink to="/staff/activity" className="nav-link">Staff activity</NavLink>
           <NavLink to="/staff/metrics" className="nav-link">{label('studio')} {labels('metric').toLowerCase()}</NavLink>
           <NavLink to="/staff/glossary" className="nav-link">Glossary</NavLink>
           <NavLink to="/staff/branding" className="nav-link">Sign-in branding</NavLink>
@@ -319,7 +324,10 @@ function AppRoutes() {
               <Route path="/staff/classes/new" element={<StaffCreateClassPage />} />
               <Route path="/staff/class-catalog" element={<StaffClassCatalogPage />} />
               <Route path="/staff/students" element={<StaffStudentsPage />} />
+              <Route path="/staff/students/:studentId" element={<StaffStudentMembershipPage />} />
               <Route path="/staff/memberships" element={<StaffMembershipPlansPage />} />
+              <Route path="/staff/payments" element={<StaffPaymentsPage />} />
+              <Route path="/staff/activity" element={<StaffActivityPage />} />
               <Route path="/staff/reports" element={<StaffReportsPage />} />
               <Route path="/staff/metrics" element={<StaffMetricsPage />} />
               <Route path="/staff/glossary" element={<StaffGlossaryPage />} />

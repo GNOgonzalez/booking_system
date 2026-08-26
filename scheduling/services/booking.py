@@ -92,14 +92,15 @@ def can_cancel(user, booking):
     return False
 
 
-def cancel_booking(user, booking):
+def cancel_booking(user, booking, *, refund=True):
+    """Cancel a booking. Staff may pass refund=False to keep the ticket spent."""
     if not can_cancel(user, booking):
         return False
 
     booking.status = 'cancelled'
     booking.save()
 
-    if booking.class_request_id is None:
+    if refund and booking.class_request_id is None:
         refund_booking_tickets(booking)
     send_booking_cancellation(booking)
 

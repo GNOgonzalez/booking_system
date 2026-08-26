@@ -134,7 +134,34 @@ urlpatterns = [
     path('staff/teachers/', staff_views.StaffTeacherListView.as_view(), name='api_staff_teachers'),
     path('staff/students/', staff_views.StaffStudentListView.as_view(), name='api_staff_students'),
     path('staff/students/<int:student_id>/', staff_views.StaffStudentDetailView.as_view(), name='api_staff_student_detail'),
+    path(
+        'staff/students/<int:student_id>/password/',
+        staff_views.StaffStudentPasswordResetView.as_view(),
+        name='api_staff_student_password',
+    ),
+    path(
+        'staff/students/<int:student_id>/membership/',
+        staff_views.StaffStudentMembershipView.as_view(),
+        name='api_staff_student_membership',
+    ),
+    path(
+        'staff/students/<int:student_id>/membership/<int:membership_id>/',
+        staff_views.StaffStudentMembershipDetailView.as_view(),
+        name='api_staff_student_membership_detail',
+    ),
+    path(
+        'staff/bookings/<int:booking_id>/cancel/',
+        staff_views.StaffBookingCancelView.as_view(),
+        name='api_staff_booking_cancel',
+    ),
+    path('staff/payments/', staff_views.StaffPaymentSettingsView.as_view(), name='api_staff_payments'),
+    path('staff/activity/', staff_views.StaffActivityLogView.as_view(), name='api_staff_activity'),
     path('staff/schedule/', staff_views.StaffOverallScheduleView.as_view(), name='api_staff_schedule'),
+    path(
+        'staff/teachers/<int:teacher_id>/password/',
+        staff_views.StaffTeacherPasswordResetView.as_view(),
+        name='api_staff_teacher_password',
+    ),
     path(
         'staff/teachers/<int:teacher_id>/',
         staff_views.StaffTeacherDetailView.as_view(),
@@ -236,6 +263,11 @@ urlpatterns = [
         'staff/class-catalog/focuses/<int:focus_id>/topics/bulk/',
         class_catalog_views.StaffClassCatalogBulkTopicsView.as_view(),
         name='api_staff_class_catalog_bulk_topics',
+    ),
+    path(
+        'staff/class-catalog/<str:kind>/<int:node_id>/',
+        class_catalog_views.StaffClassCatalogNodeView.as_view(),
+        name='api_staff_class_catalog_node',
     ),
     path('staff/class-offerings/', staff_views.StaffClassOfferingListView.as_view(), name='api_staff_class_offerings'),
     path('staff/membership-plans/', staff_views.StaffMembershipPlanListCreateView.as_view(), name='api_staff_membership_plans'),

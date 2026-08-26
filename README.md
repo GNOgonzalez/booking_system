@@ -31,7 +31,7 @@ npm run dev                                 # http://127.0.0.1:5173
 | Surface | URL |
 |---------|-----|
 | Django templates | http://127.0.0.1:8000 |
-| Django admin | http://127.0.0.1:8000/admin/ |
+| Django admin | http://127.0.0.1:8000/admin/ (seed with `--staff-superuser` to give `demo_staff` access) |
 | Browsable API | http://127.0.0.1:8000/api/ |
 | React SPA | http://127.0.0.1:5173 |
 

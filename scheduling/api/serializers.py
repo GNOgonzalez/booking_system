@@ -394,6 +394,46 @@ class StaffUserUpdateSerializer(serializers.Serializer):
     display_name = serializers.CharField(required=False, allow_blank=True, max_length=50)
 
 
+class StaffUserCreateSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    display_name = serializers.CharField(required=False, allow_blank=True, max_length=50)
+
+
+class StaffPasswordResetSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=300)
+
+
+class StaffMembershipGrantSerializer(serializers.Serializer):
+    plan_id = serializers.IntegerField()
+    months = serializers.IntegerField(required=False, min_value=1, max_value=24, default=1)
+    amount_cents = serializers.IntegerField(required=False, min_value=0, default=0)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=300)
+
+
+class StaffMembershipUpdateSerializer(serializers.Serializer):
+    tickets_delta = serializers.IntegerField(required=False)
+    is_active = serializers.BooleanField(required=False)
+    valid_until = serializers.CharField(required=False, allow_blank=True)
+    extend_days = serializers.IntegerField(required=False, min_value=1, max_value=365)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=300)
+
+    def validate(self, attrs):
+        actions = {'tickets_delta', 'is_active', 'valid_until', 'extend_days'}
+        if not actions & set(attrs):
+            raise serializers.ValidationError(
+                'Provide tickets_delta, is_active, valid_until, or extend_days.',
+            )
+        return attrs
+
+
+class StaffBookingCancelSerializer(serializers.Serializer):
+    refund = serializers.BooleanField(required=False, default=True)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=300)
+
+
 class MessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(source='sender.username', read_only=True)
     recipient_name = serializers.CharField(source='recipient.username', read_only=True)

@@ -53,6 +53,11 @@ class Command(BaseCommand):
             action='store_true',
             help='Grant demo_student membership, an upcoming booking, and showcase-ready state.',
         )
+        parser.add_argument(
+            '--staff-superuser',
+            action='store_true',
+            help='Give demo_staff Django admin access (local only — never on a public demo).',
+        )
 
     def _ensure_class_offering(self, teacher, subject, level, focus, topics, *, topics_ordered=False, **extra):
         if isinstance(topics, str):
@@ -235,13 +240,15 @@ class Command(BaseCommand):
         ensure_default_glossary()
         ensure_default_catalog()
 
+        # Django admin access is opt-in: a public demo should not expose /admin/.
+        grant_admin = options['staff_superuser']
         staff_user, _ = User.objects.get_or_create(
             username='demo_staff',
             defaults={'email': 'staff@example.com'},
         )
         staff_user.set_password('demo1234')
-        staff_user.is_staff = True
-        staff_user.is_superuser = True
+        staff_user.is_staff = grant_admin
+        staff_user.is_superuser = grant_admin
         staff_user.save()
         staff_user.groups.add(Group.objects.get(name='staff'))
 
@@ -560,7 +567,10 @@ class Command(BaseCommand):
         self.stdout.write('  demo_teacher / demo1234')
         self.stdout.write('  demo_student / demo1234')
         self.stdout.write('  demo_student_2, demo_student_3, demo_student_4 / demo1234')
-        self.stdout.write('  demo_staff / demo1234  (Django admin at /admin/)')
+        if grant_admin:
+            self.stdout.write('  demo_staff / demo1234  (staff + Django admin at /admin/)')
+        else:
+            self.stdout.write('  demo_staff / demo1234  (staff app only — pass --staff-superuser for /admin/)')
         owner, owner_created = self._ensure_owner_teacher()
         if owner_created:
             self.stdout.write('  gnogonzalez / demo1234  (teacher)')

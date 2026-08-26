@@ -1,6 +1,23 @@
 """Studio class roadmap — subject → level → focus → topics."""
 
-from scheduling.models import CatalogFocus, CatalogLevel, CatalogSubject, CatalogTopic
+from scheduling.models import (
+    CatalogFocus,
+    CatalogLevel,
+    CatalogSubject,
+    CatalogTopic,
+    ClassOffering,
+    ClassTopic,
+    MembershipPlan,
+)
+
+CATALOG_KINDS = ('subject', 'level', 'focus', 'topic')
+
+_KIND_MODELS = {
+    'subject': CatalogSubject,
+    'level': CatalogLevel,
+    'focus': CatalogFocus,
+    'topic': CatalogTopic,
+}
 
 
 def _serialize_topic(topic):
@@ -160,6 +177,141 @@ def bulk_add_catalog_topics(focus_id, raw_topics):
         created.append(topic)
         next_order += 1
     return [_serialize_topic(topic) for topic in created], None
+
+
+def _name_field(kind):
+    return 'title' if kind == 'topic' else 'name'
+
+
+def get_catalog_node(kind, node_id):
+    model = _KIND_MODELS.get(kind)
+    if model is None:
+        return None
+    return model.objects.filter(pk=node_id).first()
+
+
+def _node_summary(kind, node):
+    return {
+        'kind': kind,
+        'id': node.id,
+        'name': getattr(node, _name_field(kind)),
+        'is_active': node.is_active,
+    }
+
+
+def _offerings_for_node(kind, node):
+    """Teacher classes that reference this roadmap entry (matched on stored names)."""
+    if kind == 'subject':
+        return ClassOffering.objects.filter(subject__iexact=node.name)
+    if kind == 'level':
+        return ClassOffering.objects.filter(
+            subject__iexact=node.subject.name,
+            level__iexact=node.name,
+        )
+    if kind == 'focus':
+        level = node.level
+        return ClassOffering.objects.filter(
+            subject__iexact=level.subject.name,
+            level__iexact=level.name,
+            focus__iexact=node.name,
+        )
+    return ClassOffering.objects.none()
+
+
+def _class_topics_for_topic(topic):
+    return ClassTopic.objects.filter(
+        class_offering__in=_offerings_for_node('focus', topic.focus),
+        title__iexact=topic.title,
+    )
+
+
+def catalog_node_usage(kind, node):
+    """How many teacher classes (or class topics) depend on this roadmap entry."""
+    if kind == 'topic':
+        return _class_topics_for_topic(node).count()
+    return _offerings_for_node(kind, node).count()
+
+
+def catalog_node_children(kind, node):
+    if kind == 'subject':
+        return node.levels.count()
+    if kind == 'level':
+        return node.focuses.count()
+    if kind == 'focus':
+        return node.topics.count()
+    return 0
+
+
+def _sibling_name_taken(kind, node, name):
+    model = _KIND_MODELS[kind]
+    if kind == 'subject':
+        siblings = model.objects.filter(name__iexact=name)
+    elif kind == 'level':
+        siblings = model.objects.filter(subject=node.subject, name__iexact=name)
+    elif kind == 'focus':
+        siblings = model.objects.filter(level=node.level, name__iexact=name)
+    else:
+        siblings = model.objects.filter(focus=node.focus, title__iexact=name)
+    return siblings.exclude(pk=node.pk).exists()
+
+
+def rename_catalog_node(kind, node_id, new_name):
+    """Rename a roadmap entry and keep already-created teacher classes in sync."""
+    node = get_catalog_node(kind, node_id)
+    if node is None:
+        return None, 'Roadmap entry not found.'
+    new_name = (new_name or '').strip()
+    if not new_name:
+        return None, 'Name is required.'
+
+    field = _name_field(kind)
+    if getattr(node, field) == new_name:
+        return _node_summary(kind, node), None
+    if _sibling_name_taken(kind, node, new_name):
+        return None, f'"{new_name}" already exists here.'
+
+    if kind == 'topic':
+        _class_topics_for_topic(node).update(title=new_name)
+    else:
+        _offerings_for_node(kind, node).update(**{kind: new_name})
+
+    setattr(node, field, new_name)
+    node.save(update_fields=[field])
+    return _node_summary(kind, node), None
+
+
+def set_catalog_node_active(kind, node_id, is_active):
+    """Hide or restore a roadmap entry without touching existing classes."""
+    node = get_catalog_node(kind, node_id)
+    if node is None:
+        return None, 'Roadmap entry not found.'
+    node.is_active = bool(is_active)
+    node.save(update_fields=['is_active'])
+    return _node_summary(kind, node), None
+
+
+def delete_catalog_node(kind, node_id):
+    """Remove a roadmap mistake. Blocked while teacher classes still reference it."""
+    node = get_catalog_node(kind, node_id)
+    if node is None:
+        return None, 'Roadmap entry not found.'
+
+    usage = catalog_node_usage(kind, node)
+    if usage:
+        noun = 'class' if usage == 1 else 'classes'
+        return None, (
+            f'{usage} {noun} still use this roadmap entry. '
+            'Deactivate it instead, or remove those classes first.'
+        )
+    if kind == 'subject' and MembershipPlan.objects.filter(subject__iexact=node.name).exists():
+        return None, (
+            'A membership plan is scoped to this subject. '
+            'Update the plan first, or deactivate the subject instead.'
+        )
+
+    summary = _node_summary(kind, node)
+    node.delete()
+    return summary, None
 
 
 def ensure_default_catalog():

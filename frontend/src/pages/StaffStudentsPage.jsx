@@ -10,6 +10,14 @@ export default function StaffStudentsPage() {
   const [message, setMessage] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [newStudent, setNewStudent] = useState({
+    username: '',
+    email: '',
+    display_name: '',
+    password: '',
+  })
 
   const load = () => {
     apiFetch('/api/staff/students/')
@@ -51,15 +59,97 @@ export default function StaffStudentsPage() {
     }
   }
 
+  const createStudent = async (e) => {
+    e.preventDefault()
+    setError('')
+    setMessage('')
+    setCreating(true)
+    try {
+      const created = await apiFetch('/api/staff/students/', {
+        method: 'POST',
+        body: JSON.stringify(newStudent),
+      })
+      setNewStudent({ username: '', email: '', display_name: '', password: '' })
+      setShowAdd(false)
+      setMessage(`${created.username} added. Give them a membership to let them book.`)
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
   return (
     <div>
       <p className="card-meta"><Link to="/staff">← Staff dashboard</Link></p>
-      <h1>{labels('student')}</h1>
+      <div className="card-row">
+        <h1>{labels('student')}</h1>
+        <button
+          type="button"
+          className={showAdd ? 'secondary' : ''}
+          onClick={() => setShowAdd((open) => !open)}
+        >
+          {showAdd ? 'Cancel' : `Add ${label('student').toLowerCase()}`}
+        </button>
+      </div>
       <p className="page-intro">
-        Activate or deactivate {label('student').toLowerCase()} accounts. Inactive {labels('student').toLowerCase()} cannot log in or book {labels('session').toLowerCase()}.
+        Manage memberships and tickets, cancel bookings, reset passwords, or deactivate accounts.
+        Inactive {labels('student').toLowerCase()} cannot log in or book {labels('session').toLowerCase()}.
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
+
+      {showAdd && (
+        <form onSubmit={createStudent} className="card">
+          <div className="card-title">New {label('student').toLowerCase()}</div>
+          <p className="card-meta">
+            For someone who signed up in person. They can change the password under Account.
+          </p>
+          <div className="row">
+            <div className="field grow">
+              <label>Username</label>
+              <input
+                value={newStudent.username}
+                onChange={(e) => setNewStudent({ ...newStudent, username: e.target.value })}
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div className="field grow">
+              <label>Email (optional)</label>
+              <input
+                type="email"
+                value={newStudent.email}
+                onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div className="field grow">
+              <label>Display name (optional)</label>
+              <input
+                value={newStudent.display_name}
+                onChange={(e) => setNewStudent({ ...newStudent, display_name: e.target.value })}
+              />
+            </div>
+            <div className="field grow">
+              <label>Temporary password</label>
+              <input
+                type="password"
+                value={newStudent.password}
+                onChange={(e) => setNewStudent({ ...newStudent, password: e.target.value })}
+                autoComplete="new-password"
+                required
+              />
+            </div>
+          </div>
+          <button type="submit" disabled={creating}>
+            {creating ? 'Creating…' : `Create ${label('student').toLowerCase()}`}
+          </button>
+        </form>
+      )}
 
       {students.map((student) => (
         <div key={student.id} className={`card${student.is_active ? '' : ' card--inactive'}`}>
@@ -72,6 +162,9 @@ export default function StaffStudentsPage() {
               <div className="card-meta">@{student.username}</div>
             </div>
             <div className="row-actions">
+              <Link to={`/staff/students/${student.id}`} className="btn">
+                Membership &amp; tickets
+              </Link>
               <button
                 type="button"
                 className={student.is_active ? 'danger' : 'secondary'}
@@ -107,7 +200,12 @@ export default function StaffStudentsPage() {
           )}
         </div>
       ))}
-      {!students.length && !error && <p className="card-meta">No students found.</p>}
+      {!students.length && !error && (
+        <p className="card-meta">
+          No {labels('student').toLowerCase()} yet. They can self-register, or use{' '}
+          <strong>Add {label('student').toLowerCase()}</strong> above.
+        </p>
+      )}
     </div>
   )
 }

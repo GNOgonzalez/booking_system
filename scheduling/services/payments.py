@@ -24,6 +24,60 @@ def payment_mode():
     return 'stripe' if settings.STRIPE.get('ENABLED') else 'mock'
 
 
+def _masked_key(value):
+    """Show enough of a key to identify it, never enough to use it."""
+    if not value:
+        return ''
+    if len(value) <= 12:
+        return '••••'
+    return f'{value[:7]}…{value[-4:]}'
+
+
+def payment_settings_status(*, base_url=''):
+    """Read-only payment configuration for the staff settings panel. Never returns secrets."""
+    from django.db.models import Count, Sum
+
+    stripe = settings.STRIPE
+    mode = payment_mode()
+    totals = (
+        Payment.objects.filter(status=Payment.STATUS_COMPLETED)
+        .values('provider')
+        .annotate(count=Count('id'), amount_cents=Sum('amount_cents'))
+        .order_by('provider')
+    )
+    webhook_path = '/api/payments/stripe/webhook/'
+    return {
+        'mode': mode,
+        'is_live': mode == 'stripe',
+        'mock_payments_allowed': bool(settings.DEBUG or settings.ALLOW_MOCK_PAYMENTS),
+        'debug': settings.DEBUG,
+        'stripe': {
+            'secret_key_configured': bool(stripe.get('SECRET_KEY')),
+            'publishable_key': stripe.get('PUBLISHABLE_KEY') or '',
+            'secret_key_hint': _masked_key(stripe.get('SECRET_KEY')),
+            'webhook_secret_configured': bool(stripe.get('WEBHOOK_SECRET')),
+            'webhook_path': webhook_path,
+            'webhook_url': f'{base_url.rstrip("/")}{webhook_path}' if base_url else webhook_path,
+        },
+        'env_keys': [
+            'STRIPE_SECRET_KEY',
+            'STRIPE_PUBLISHABLE_KEY',
+            'STRIPE_WEBHOOK_SECRET',
+            'ALLOW_MOCK_PAYMENTS',
+        ],
+        'completed_by_provider': [
+            {
+                'provider': row['provider'],
+                'count': row['count'],
+                'amount_cents': row['amount_cents'] or 0,
+            }
+            for row in totals
+        ],
+        'pending_count': Payment.objects.filter(status=Payment.STATUS_PENDING).count(),
+        'failed_count': Payment.objects.filter(status=Payment.STATUS_FAILED).count(),
+    }
+
+
 def get_available_plans():
     return (
         MembershipPlan.objects.filter(is_active=True)
@@ -106,6 +160,13 @@ def _grant_ticket_pack(user, plan, months=1, membership_id=None):
         return None, error
     grant_tickets(membership, plan.ticket_allowance * months)
     return membership, None
+
+
+def grant_plan_to_user(user, plan, *, months=1, membership_id=None):
+    """Apply a plan's benefits without running checkout (staff comp or cash sale)."""
+    if plan.plan_type == MembershipPlan.PLAN_TICKET_PACK:
+        return _grant_ticket_pack(user, plan, months=months, membership_id=membership_id)
+    return _grant_subscription(user, plan, months=months), None
 
 
 def get_payment_status(user, payment_id):
