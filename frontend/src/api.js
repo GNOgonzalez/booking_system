@@ -129,6 +129,13 @@ function networkError() {
 /** Read error body once — Response bodies cannot be consumed twice. */
 async function parseResponseError(res) {
   const text = await res.text()
+  const looksHtml = /^\s*</.test(text)
+  if (looksHtml) {
+    if (res.status === 404) {
+      return 'This API route is missing on the server (404). Redeploy the Django API so it matches this frontend.'
+    }
+    return `Request failed (${res.status}).`
+  }
   let message = text || `Request failed: ${res.status}`
   try {
     const json = JSON.parse(text)
