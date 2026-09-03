@@ -13,12 +13,15 @@ from scheduling.models import (
     ClassOffering,
     ClassTopic,
     CurriculumItem,
+    CurriculumTrack,
     Membership,
     MembershipPlan,
     Message,
     Session,
+    TeacherStudentAssignment,
 )
 from scheduling.services.class_catalog import ensure_default_catalog
+from scheduling.services.curriculum import create_track, enroll_student
 from scheduling.services.glossary import ensure_default_glossary
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.sessions import session_display_title
@@ -551,6 +554,25 @@ class Command(BaseCommand):
                 'is_published': True,
             },
         )
+
+        TeacherStudentAssignment.objects.get_or_create(teacher=teacher, student=student)
+        TeacherStudentAssignment.objects.get_or_create(teacher=teacher, student=student_2)
+        track = CurriculumTrack.objects.filter(title='Beginner Japanese path').first()
+        if track is None:
+            track, _ = create_track(
+                title='Beginner Japanese path',
+                description='A studio starter sequence. Your teacher may skip a module if you already know it.',
+                is_template=True,
+                created_by=staff_user,
+                modules=[
+                    {'title': 'Greetings', 'content': 'Learn こんにちは, ありがとう, and self-introduction.', 'sort_order': 0},
+                    {'title': 'Hiragana あ–そ', 'content': 'Read and write the first two rows.', 'sort_order': 1},
+                    {'title': 'Classroom phrases', 'content': 'Please say, please listen, I don’t understand.', 'sort_order': 2},
+                    {'title': 'Simple requests', 'content': 'Use 〜てください in a café or shop.', 'sort_order': 3},
+                ],
+            )
+        if track is not None:
+            enroll_student(student, track)
 
         if not Message.objects.filter(subject='Welcome').exists():
             Message.objects.create(

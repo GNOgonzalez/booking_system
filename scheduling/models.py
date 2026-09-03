@@ -775,6 +775,151 @@ class CurriculumItem(models.Model):
         return self.title
 
 
+class TeacherStudentAssignment(models.Model):
+    """Staff-managed roster: which teachers handle which students (M2M)."""
+
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='student_assignments',
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='teacher_assignments',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_teacher_student_assignments',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['teacher', 'student'],
+                name='unique_teacher_student_assignment',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.teacher} → {self.student}'
+
+
+class CurriculumTrack(models.Model):
+    """Ordered learning path. Templates are student-pickable; custom tracks are teacher-made."""
+
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    is_template = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_curriculum_tracks',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['title']
+
+    def __str__(self):
+        return self.title
+
+
+class CurriculumModule(models.Model):
+    track = models.ForeignKey(
+        CurriculumTrack,
+        on_delete=models.CASCADE,
+        related_name='modules',
+    )
+    title = models.CharField(max_length=200)
+    content = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return self.title
+
+
+class StudentCurriculum(models.Model):
+    """A student follows one active track at a time."""
+
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='curriculum_enrollments',
+    )
+    track = models.ForeignKey(
+        CurriculumTrack,
+        on_delete=models.CASCADE,
+        related_name='enrollments',
+    )
+    is_active = models.BooleanField(default=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student'],
+                condition=models.Q(is_active=True),
+                name='one_active_student_curriculum',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.student} → {self.track}'
+
+
+class StudentModuleProgress(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_COMPLETED = 'completed'
+    STATUS_SKIPPED = 'skipped'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_SKIPPED, 'Skipped'),
+    ]
+
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='module_progress',
+    )
+    module = models.ForeignKey(
+        CurriculumModule,
+        on_delete=models.CASCADE,
+        related_name='progress_rows',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_module_progress',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student', 'module'],
+                name='unique_student_module_progress',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.student} {self.module} ({self.status})'
+
+
 class StaffAlert(models.Model):
     """In-app activity alert for studio staff (signups, membership, payments)."""
 

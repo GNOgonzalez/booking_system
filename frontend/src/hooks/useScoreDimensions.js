@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../api.js'
 
 const FALLBACK = [
@@ -52,22 +52,31 @@ export function useScoreDimensions(subject = '') {
   const subjectKey = subject || ''
 
   useEffect(() => {
+    let cancelled = false
     const qs = subjectKey ? `?subject=${encodeURIComponent(subjectKey)}` : ''
     apiFetch(`/api/progress/score-dimensions/${qs}`)
       .then((rows) => {
+        if (cancelled) return
         if (rows.length) setDimensions(rows)
         else if (!subjectKey) setDimensions(FALLBACK)
         else setDimensions([])
       })
       .catch(() => {
+        if (cancelled) return
         if (!subjectKey) setDimensions(FALLBACK)
       })
+    return () => {
+      cancelled = true
+    }
   }, [subjectKey])
 
-  return dimensions.map((d, i) => ({
-    ...d,
-    min_score: d.min_score ?? 0,
-    max_score: d.max_score ?? 5,
-    color: COLORS[i % COLORS.length],
-  }))
+  return useMemo(
+    () => dimensions.map((d, i) => ({
+      ...d,
+      min_score: d.min_score ?? 0,
+      max_score: d.max_score ?? 5,
+      color: COLORS[i % COLORS.length],
+    })),
+    [dimensions],
+  )
 }

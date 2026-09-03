@@ -12,10 +12,22 @@ COPY . .
 
 RUN python manage.py collectstatic --noinput || true
 
+# Run as a non-root user. media/ must exist and be writable before we drop
+# privileges, otherwise homework uploads fail at runtime.
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/media \
+    && chown -R appuser:appuser /app \
+    && chmod +x /app/scripts/start.sh
+USER appuser
+
 EXPOSE 8000
 
+# Liveness only — /healthz deliberately does not touch the database, so a paused
+# Supabase project does not turn into a restart loop. slim has no curl/wget.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import os,urllib.request,sys; \
+sys.exit(0 if urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT','8000')}/healthz\", timeout=4).status == 200 else 1)"
+
 # Render sets PORT (often 10000); default 8000 for local docker compose.
-# SEED_DEMO=true runs bootstrap_sandbox --demo after migrate (free tier has no Shell).
-# SEED_SHOWCASE=true adds --showcase (demo_student membership + upcoming lesson).
-# DEMO_RESET_ON_START=true adds --reset (fresh demo data on each container start).
-CMD ["sh", "-c", "python manage.py migrate --noinput && if [ \"$SEED_DEMO\" = \"true\" ]; then RESET_FLAG=\"\"; SHOWCASE_FLAG=\"\"; if [ \"$DEMO_RESET_ON_START\" = \"true\" ]; then RESET_FLAG=\"--reset\"; fi; if [ \"$SEED_SHOWCASE\" = \"true\" ]; then SHOWCASE_FLAG=\"--showcase\"; fi; python manage.py bootstrap_sandbox --demo $RESET_FLAG $SHOWCASE_FLAG; fi && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000}"]
+# Env knobs: SEED_DEMO, SEED_SHOWCASE, DEMO_RESET_ON_START, WEB_CONCURRENCY.
+CMD ["sh", "/app/scripts/start.sh"]

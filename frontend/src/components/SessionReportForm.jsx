@@ -13,25 +13,59 @@ export default function SessionReportForm({ session, apiPaths: apiPathsProp, onS
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loadingStudents, setLoadingStudents] = useState(true)
+  const studentsPath = session?.id && apiPaths?.sessionStudents
+    ? apiPaths.sessionStudents(session.id)
+    : ''
+  const rosterPath = apiPaths?.students || ''
 
   useEffect(() => {
-    setLoadingStudents(true)
     setForm({ student: '', scores: emptyScores(dimensions), class_notes: '' })
+    // Reset when switching sessions; dimension identity is handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id])
+
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      scores: { ...emptyScores(dimensions), ...current.scores },
+    }))
+  }, [dimensions])
+
+  useEffect(() => {
+    if (!studentsPath) {
+      setLoadingStudents(false)
+      return undefined
+    }
+    let cancelled = false
+    setLoadingStudents(true)
     setError('')
     setMessage('')
 
-    apiFetch(apiPaths.sessionStudents(session.id))
+    apiFetch(studentsPath)
       .then(async (booked) => {
+        if (cancelled) return
         if (booked.length) {
           setStudents(booked)
           return
         }
-        const all = await apiFetch(apiPaths.students)
-        setStudents(all)
+        if (!rosterPath) {
+          setStudents([])
+          return
+        }
+        const all = await apiFetch(rosterPath)
+        if (!cancelled) setStudents(all)
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoadingStudents(false))
-  }, [session.id, apiPaths, dimensions])
+      .catch((err) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingStudents(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [studentsPath, rosterPath])
 
   const onField = (key) => (e) => setForm({ ...form, [key]: e.target.value })
   const onScore = (key) => (e) => setForm({

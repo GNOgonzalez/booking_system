@@ -13,6 +13,8 @@ from .models import (
     ClassTopic,
     ClassType,
     CurriculumItem,
+    CurriculumModule,
+    CurriculumTrack,
     DemoItem,
     Membership,
     MembershipPlan,
@@ -23,10 +25,13 @@ from .models import (
     SpecialAvailability,
     StaffAlert,
     StaffAlertRead,
+    StudentCurriculum,
+    StudentModuleProgress,
     StudioBranding,
     StudioGlossary,
     StudioLLMConfig,
     TeacherPermission,
+    TeacherStudentAssignment,
 )
 
 admin.site.register(DemoItem)
@@ -53,5 +58,10 @@ admin.site.register(BlogPost)
 admin.site.register(ClassRequest)
 admin.site.register(Message)
 admin.site.register(CurriculumItem)
+admin.site.register(TeacherStudentAssignment)
+admin.site.register(CurriculumTrack)
+admin.site.register(CurriculumModule)
+admin.site.register(StudentCurriculum)
+admin.site.register(StudentModuleProgress)
 admin.site.register(StaffAlert)
 admin.site.register(StaffAlertRead)

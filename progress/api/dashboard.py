@@ -12,6 +12,7 @@ from progress.services import (
     student_dashboard,
 )
 from scheduling.api.permissions import IsStudent, IsTeacher
+from scheduling.services.teacher_permissions import teacher_can
 
 User = get_user_model()
 
@@ -68,6 +69,9 @@ class TeacherProgressListCreateView(generics.ListCreateAPIView):
         return ProgressReport.objects.filter(teacher=self.request.user)
 
     def perform_create(self, serializer):
+        if not teacher_can(self.request.user, 'write_reports'):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You do not have permission to write reports.')
         serializer.save(teacher=self.request.user)
 
 

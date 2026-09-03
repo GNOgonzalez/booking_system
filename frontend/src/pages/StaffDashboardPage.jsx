@@ -220,6 +220,14 @@ export default function StaffDashboardPage() {
       </div>
 
       <div className="card">
+        <div className="card-title">Curriculum templates</div>
+        <p className="card-meta">
+          Premade learning paths students can pick. Assign teachers to students so they can skip modules or build a custom path.
+        </p>
+        <Link to="/staff/curriculum" className="btn secondary">Manage curriculum</Link>
+      </div>
+
+      <div className="card">
         <div className="card-title">Create {label('class').toLowerCase()}</div>
         <p className="card-meta">Add a teachable {label('class').toLowerCase()} to any {label('teacher').toLowerCase()}&apos;s catalog.</p>
         <Link to="/staff/classes/new" className="btn">Create {label('class').toLowerCase()}</Link>
@@ -237,6 +245,22 @@ export default function StaffDashboardPage() {
         <div className="card-title">Payments</div>
         <p className="card-meta">Whether Stripe is live or checkout is mocked, and the webhook URL to paste into Stripe.</p>
         <Link to="/staff/payments" className="btn secondary">View payment settings</Link>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Integrations</div>
+        <p className="card-meta">
+          Whether emails are really being delivered and which teachers have connected Google.
+        </p>
+        <Link to="/staff/integrations" className="btn secondary">View integrations</Link>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Pending class requests</div>
+        <p className="card-meta">
+          Every request across the {label('studio').toLowerCase()} waiting on approval.
+        </p>
+        <Link to="/staff/requests" className="btn secondary">Review requests</Link>
       </div>
 
       <div className="card">

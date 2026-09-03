@@ -59,6 +59,7 @@ from scheduling.services.payments import (
     payment_mode,
     purchase_membership,
 )
+from scheduling.services.roster import roster_students_for_teacher
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
 from scheduling.services.student_home import student_home
 from scheduling.services.teacher_permissions import (
@@ -74,13 +75,13 @@ User = get_user_model()
 
 
 class TeacherStudentListView(generics.ListAPIView):
-    """Students in the student group — for teacher dropdowns."""
+    """Students this teacher may manage (assigned or already taught)."""
 
     permission_classes = [IsTeacher]
     serializer_class = StudentOptionSerializer
 
     def get_queryset(self):
-        return User.objects.filter(groups__name='student', is_active=True).order_by('username')
+        return roster_students_for_teacher(self.request.user)
 
 
 class OpenSessionListView(generics.ListAPIView):

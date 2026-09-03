@@ -10,18 +10,6 @@ const TIME_BUCKETS = {
   evening: { label: 'Evening (after 5 pm)', match: (hour) => hour >= 17 },
 }
 
-function uniqueOptions(sessions, idKey, labelKey) {
-  const map = new Map()
-  for (const session of sessions) {
-    const id = session[idKey]
-    const label = session[labelKey]
-    if (id != null && label) map.set(id, label)
-  }
-  return [...map.entries()]
-    .map(([id, label]) => ({ id: String(id), label }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-}
-
 export default function StudentSessionsPage() {
   const [sessions, setSessions] = useState([])
   const [error, setError] = useState('')
@@ -30,8 +18,6 @@ export default function StudentSessionsPage() {
   const [ticketsRemaining, setTicketsRemaining] = useState(null)
   const [memberships, setMemberships] = useState([])
   const [filters, setFilters] = useState({
-    classOffering: '',
-    teacher: '',
     time: '',
   })
   const [loading, setLoading] = useState(true)
@@ -59,23 +45,8 @@ export default function StudentSessionsPage() {
 
   useEffect(load, [])
 
-  const classOptions = useMemo(
-    () => uniqueOptions(sessions, 'class_offering', 'class_offering_label'),
-    [sessions],
-  )
-  const teacherOptions = useMemo(
-    () => uniqueOptions(sessions, 'teacher', 'teacher_name'),
-    [sessions],
-  )
-
   const filteredSessions = useMemo(() => {
     return sessions.filter((session) => {
-      if (filters.classOffering && String(session.class_offering) !== filters.classOffering) {
-        return false
-      }
-      if (filters.teacher && String(session.teacher) !== filters.teacher) {
-        return false
-      }
       if (filters.time) {
         const hour = new Date(session.start_time).getHours()
         if (!TIME_BUCKETS[filters.time]?.match(hour)) return false
@@ -84,7 +55,7 @@ export default function StudentSessionsPage() {
     })
   }, [sessions, filters])
 
-  const hasActiveFilters = Boolean(filters.classOffering || filters.teacher || filters.time)
+  const hasActiveFilters = Boolean(filters.time)
 
   const book = async (sessionId) => {
     setError('')
@@ -110,14 +81,14 @@ export default function StudentSessionsPage() {
   }
 
   const clearFilters = () => {
-    setFilters({ classOffering: '', teacher: '', time: '' })
+    setFilters({ time: '' })
   }
 
   return (
     <div className="page-calendar">
       <h1>Book a lesson</h1>
       <p className="page-intro">
-        Browse upcoming lessons on the calendar. Filter by class, time, or teacher, then click a session to book.
+        Browse upcoming lessons on the calendar. Filter by class, teacher, or time of day, or switch to list view.
         Or <Link to="/sessions/request">request a custom time</Link> inside a teacher&apos;s availability.
         {ticketsRemaining != null && (
           <> You have <strong>{ticketsRemaining}</strong> booking ticket{ticketsRemaining === 1 ? '' : 's'} across your memberships.</>
@@ -139,20 +110,7 @@ export default function StudentSessionsPage() {
         <div className="card session-filters">
           <div className="row">
             <div className="field grow">
-              <label htmlFor="filter-class">Class</label>
-              <select
-                id="filter-class"
-                value={filters.classOffering}
-                onChange={(e) => setFilter('classOffering', e.target.value)}
-              >
-                <option value="">All classes</option>
-                {classOptions.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field grow">
-              <label htmlFor="filter-time">Time</label>
+              <label htmlFor="filter-time">Time of day</label>
               <select
                 id="filter-time"
                 value={filters.time}
@@ -164,22 +122,9 @@ export default function StudentSessionsPage() {
                 ))}
               </select>
             </div>
-            <div className="field grow">
-              <label htmlFor="filter-teacher">Teacher</label>
-              <select
-                id="filter-teacher"
-                value={filters.teacher}
-                onChange={(e) => setFilter('teacher', e.target.value)}
-              >
-                <option value="">All teachers</option>
-                {teacherOptions.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </select>
-            </div>
             {hasActiveFilters && (
               <button type="button" className="secondary" onClick={clearFilters}>
-                Clear filters
+                Clear
               </button>
             )}
           </div>

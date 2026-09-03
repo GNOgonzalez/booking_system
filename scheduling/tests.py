@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.utils import OperationalError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -771,10 +772,11 @@ class SessionListQueryTests(TestCase):
             )
             Booking.objects.create(session=session, student=self.student, status='confirmed')
 
-    def test_sessions_for_list_uses_one_query(self):
+    def test_sessions_for_list_uses_constant_queries(self):
         from scheduling.services.sessions import sessions_for_list
 
-        with self.assertNumQueries(1):
+        # One for sessions, one for the prefetched confirmed bookings.
+        with self.assertNumQueries(2):
             rows = list(sessions_for_list(Session.objects.all()))
         self.assertEqual(len(rows), 5)
 
@@ -785,6 +787,16 @@ class SessionListQueryTests(TestCase):
         session = sessions_for_list(Session.objects.all()).first()
         data = SessionSerializer(session).data
         self.assertEqual(data['confirmed_count'], 1)
+        self.assertEqual(data['students'], [{'id': self.student.id, 'username': 'list_student'}])
+
+    def test_serializer_does_not_query_per_session_for_students(self):
+        from scheduling.api.serializers import SessionSerializer
+        from scheduling.services.sessions import sessions_for_list
+
+        rows = list(sessions_for_list(Session.objects.all()))
+        with self.assertNumQueries(0):
+            payload = [SessionSerializer(session).data for session in rows]
+        self.assertEqual(payload[0]['students'][0]['username'], 'list_student')
 
 
 class IdorPermissionTests(TestCase):
@@ -2910,6 +2922,102 @@ class StaffPaymentSettingsTests(TestCase):
         self.assertEqual(res.status_code, 403)
 
 
+class HealthCheckTests(TestCase):
+    """Host probes must work unauthenticated, and liveness must not need the DB."""
+
+    def test_healthz_is_public_and_database_free(self):
+        with self.assertNumQueries(0):
+            res = self.client.get('/healthz')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['status'], 'ok')
+
+    def test_readyz_reports_database(self):
+        res = self.client.get('/readyz')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['database'], 'ok')
+
+    def test_readyz_returns_503_when_database_is_down(self):
+        with patch('config.health.connection') as mock_connection:
+            mock_connection.cursor.side_effect = OperationalError('could not connect')
+            res = self.client.get('/readyz')
+        self.assertEqual(res.status_code, 503)
+        self.assertEqual(res.json()['status'], 'unavailable')
+
+    def test_trailing_slash_variants_also_answer(self):
+        for path in ('/healthz/', '/readyz/'):
+            self.assertEqual(self.client.get(path).status_code, 200)
+
+
+class StaffIntegrationsStatusTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_int', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_int', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('student_int', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.console.EmailBackend')
+    def test_console_email_and_unconfigured_google_reported(self):
+        res = self.client.get('/api/staff/integrations/', **self._auth(self.staff))
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['email']['mode'], 'console')
+        self.assertFalse(data['email']['is_live'])
+        self.assertFalse(data['google']['configured'])
+        self.assertEqual(data['google']['teacher_count'], 1)
+        self.assertEqual(data['google']['connected_count'], 0)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        EMAIL_HOST='smtp.example.com',
+        EMAIL_PORT=587,
+        EMAIL_HOST_USER='studio@example.com',
+        EMAIL_HOST_PASSWORD='super-secret-app-password',
+        EMAIL_USE_TLS=True,
+    )
+    def test_live_email_never_returns_the_password(self):
+        res = self.client.get('/api/staff/integrations/', **self._auth(self.staff))
+        data = res.json()
+        self.assertTrue(data['email']['is_live'])
+        self.assertEqual(data['email']['host'], 'smtp.example.com')
+        self.assertTrue(data['email']['password_configured'])
+        self.assertNotIn('super-secret-app-password', res.content.decode())
+
+    @override_settings(
+        GOOGLE={
+            'CLIENT_ID': 'client-id-123',
+            'CLIENT_SECRET': 'google-client-secret-value',
+            'REDIRECT_URI': 'https://studio.example.com/integrations/google/callback/',
+        },
+    )
+    def test_configured_google_never_returns_the_client_secret(self):
+        from scheduling.models import GoogleCredential
+
+        GoogleCredential.objects.create(user=self.teacher, refresh_token='rt-123')
+        res = self.client.get('/api/staff/integrations/', **self._auth(self.staff))
+        data = res.json()
+        self.assertTrue(data['google']['configured'])
+        self.assertEqual(data['google']['connected_count'], 1)
+        self.assertNotIn('google-client-secret-value', res.content.decode())
+
+    def test_integrations_require_staff(self):
+        for user in (self.teacher, self.student):
+            res = self.client.get('/api/staff/integrations/', **self._auth(user))
+            self.assertEqual(res.status_code, 403)
+
+
 class StaffActivityLogTests(TestCase):
     def setUp(self):
         Group.objects.create(name='staff')
@@ -2946,3 +3054,456 @@ class StaffActivityLogTests(TestCase):
     def test_activity_log_requires_staff(self):
         res = self.client.get('/api/staff/activity/', **self._auth(self.student))
         self.assertEqual(res.status_code, 403)
+
+
+class StaffClassRequestQueueTests(TestCase):
+    """Staff see every pending request in one place, including open-pool ones."""
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_queue', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_queue', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.other_teacher = User.objects.create_user('teacher_queue_2', password='pass')
+        self.other_teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('student_queue', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+
+        self.plan = MembershipPlan.objects.create(name='All access', price_cents=1000, ticket_allowance=10)
+        self.membership = Membership.objects.create(
+            user=self.student,
+            plan=self.plan,
+            is_active=True,
+            tickets_remaining=10,
+        )
+        self.offering = ClassOffering.objects.create(
+            teacher=self.teacher,
+            subject='Japanese',
+            level='Beginner',
+            focus='Grammar',
+        )
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _request(self, *, teacher, open_pool=False, days=2):
+        start = timezone.now() + timedelta(days=days)
+        return ClassRequest.objects.create(
+            student=self.student,
+            teacher=teacher,
+            open_to_any_teacher=open_pool,
+            subject='Japanese' if open_pool else '',
+            level='Beginner' if open_pool else '',
+            focus='Grammar' if open_pool else '',
+            class_offering=None if open_pool else self.offering,
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            tickets_requested=1,
+            membership=self.membership,
+            status=ClassRequest.STATUS_PENDING,
+        )
+
+    def test_queue_lists_pending_requests_across_teachers(self):
+        self._request(teacher=self.teacher)
+        self._request(teacher=self.other_teacher, days=3)
+        res = self.client.get('/api/staff/class-requests/', **self._auth(self.staff))
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['count'], 2)
+        self.assertEqual(
+            [row['teacher'] for row in body['requests']],
+            [self.teacher.id, self.other_teacher.id],
+        )
+
+    def test_queue_excludes_resolved_requests(self):
+        denied = self._request(teacher=self.teacher)
+        denied.status = ClassRequest.STATUS_DENIED
+        denied.save(update_fields=['status'])
+        res = self.client.get('/api/staff/class-requests/', **self._auth(self.staff))
+        self.assertEqual(res.json()['count'], 0)
+
+    def test_open_pool_request_appears_once_with_candidate_teachers(self):
+        """An open request must not be duplicated per matching teacher."""
+        ClassOffering.objects.create(
+            teacher=self.other_teacher,
+            subject='Japanese',
+            level='Beginner',
+            focus='Grammar',
+        )
+        self._request(teacher=None, open_pool=True)
+        res = self.client.get('/api/staff/class-requests/', **self._auth(self.staff))
+        body = res.json()
+        self.assertEqual(body['count'], 1)
+        row = body['requests'][0]
+        self.assertIsNone(row['teacher'])
+        names = sorted(t['username'] for t in row['candidate_teachers'])
+        self.assertEqual(names, ['teacher_queue', 'teacher_queue_2'])
+
+    def test_queue_requires_staff(self):
+        for user in (self.teacher, self.student):
+            res = self.client.get('/api/staff/class-requests/', **self._auth(user))
+            self.assertEqual(res.status_code, 403)
+
+
+class TeacherCapabilityEnforcementTests(TestCase):
+    """Every teacher write endpoint refuses a teacher whose capability is switched off.
+
+    Being in the teacher group is not enough — staff control each capability, and a
+    disabled flag must be enforced server-side, not just hidden in the UI.
+    """
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('staff_caps', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('teacher_caps', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('student_caps', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+
+        self.plan = MembershipPlan.objects.create(name='All access', price_cents=1000, ticket_allowance=10)
+        self.membership = Membership.objects.create(
+            user=self.student,
+            plan=self.plan,
+            is_active=True,
+            tickets_remaining=10,
+        )
+        self.offering = ClassOffering.objects.create(
+            teacher=self.teacher,
+            subject='Japanese',
+            level='Beginner',
+            focus='Grammar',
+        )
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _revoke(self, key):
+        from scheduling.services.teacher_permissions import set_teacher_permissions
+
+        set_teacher_permissions(self.teacher, {key: False})
+
+    def _pending_request(self):
+        start = timezone.now() + timedelta(days=2)
+        return ClassRequest.objects.create(
+            student=self.student,
+            teacher=self.teacher,
+            class_offering=self.offering,
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            tickets_requested=1,
+            membership=self.membership,
+            status=ClassRequest.STATUS_PENDING,
+        )
+
+    def test_session_create_requires_manage_schedule(self):
+        self._revoke('manage_schedule')
+        start = timezone.now() + timedelta(days=2)
+        res = self.client.post(
+            '/api/teacher/sessions/',
+            {
+                'class_offering': self.offering.id,
+                'start_time': start.isoformat(),
+                'end_time': (start + timedelta(hours=1)).isoformat(),
+                'capacity': 1,
+            },
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_class_create_requires_manage_classes(self):
+        self._revoke('manage_classes')
+        res = self.client.post(
+            '/api/teacher/classes/',
+            {
+                'subject': 'Japanese',
+                'level': 'Beginner',
+                'focus': 'Reading',
+                'topics': [{'title': 'Hiragana'}],
+            },
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_availability_create_requires_manage_availability(self):
+        self._revoke('manage_availability')
+        res = self.client.post(
+            '/api/teacher/availability/',
+            {'weekday': 0, 'start_time': '09:00', 'end_time': '12:00'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(AvailabilityBlock.objects.filter(teacher=self.teacher).exists())
+
+    def test_progress_report_create_requires_write_reports(self):
+        self._revoke('write_reports')
+        res = self.client.post(
+            '/api/progress/teacher/',
+            {'student': self.student.id, 'rating': 4, 'note': 'Good work'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(self.student.progress_reports.exists())
+
+    def test_homework_create_requires_assign_homework(self):
+        self._revoke('assign_homework')
+        res = self.client.post(
+            '/api/progress/homework/teacher/',
+            {'student': self.student.id, 'title': 'Read chapter 1'},
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_class_request_approve_requires_manage_schedule(self):
+        """Approving mints a Session, so it needs the same capability as creating one."""
+        self._revoke('manage_schedule')
+        class_request = self._pending_request()
+        res = self.client.post(
+            f'/api/teacher/class-requests/{class_request.id}/approve/',
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        class_request.refresh_from_db()
+        self.assertEqual(class_request.status, ClassRequest.STATUS_PENDING)
+        self.assertIsNone(class_request.session)
+
+    def test_class_request_deny_requires_manage_schedule(self):
+        self._revoke('manage_schedule')
+        class_request = self._pending_request()
+        res = self.client.post(
+            f'/api/teacher/class-requests/{class_request.id}/deny/',
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        class_request.refresh_from_db()
+        self.assertEqual(class_request.status, ClassRequest.STATUS_PENDING)
+
+    def test_class_request_delete_requires_manage_schedule(self):
+        self._revoke('manage_schedule')
+        class_request = self._pending_request()
+        res = self.client.delete(
+            f'/api/teacher/class-requests/{class_request.id}/delete/',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertTrue(ClassRequest.objects.filter(pk=class_request.id).exists())
+
+    def test_teacher_with_capability_can_still_deny(self):
+        """Positive control — the guard blocks the flag, not the endpoint."""
+        class_request = self._pending_request()
+        res = self.client.post(
+            f'/api/teacher/class-requests/{class_request.id}/deny/',
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 200)
+        class_request.refresh_from_db()
+        self.assertEqual(class_request.status, ClassRequest.STATUS_DENIED)
+
+    def test_staff_are_never_blocked_by_teacher_capabilities(self):
+        self._revoke('manage_schedule')
+        class_request = self._pending_request()
+        res = self.client.post(
+            f'/api/staff/teachers/{self.teacher.id}/class-requests/{class_request.id}/deny/',
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        class_request.refresh_from_db()
+        self.assertEqual(class_request.status, ClassRequest.STATUS_DENIED)
+
+
+class TeacherStudentCurriculumTests(TestCase):
+    def setUp(self):
+        Group.objects.create(name='student')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='staff')
+        self.teacher = User.objects.create_user('curr_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.other_teacher = User.objects.create_user('curr_other', password='pass')
+        self.other_teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('curr_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.student_b = User.objects.create_user('curr_student_b', password='pass')
+        self.student_b.groups.add(Group.objects.get(name='student'))
+        self.staff = User.objects.create_user('curr_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        from scheduling.services.teacher_permissions import ensure_default_permissions
+
+        ensure_default_permissions(self.teacher)
+        ensure_default_permissions(self.other_teacher)
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _template(self):
+        from scheduling.services.curriculum import create_track
+
+        track, err = create_track(
+            title='Starter path',
+            is_template=True,
+            modules=[
+                {'title': 'One', 'content': 'First', 'sort_order': 0},
+                {'title': 'Two', 'content': 'Second', 'sort_order': 1},
+            ],
+        )
+        self.assertIsNone(err)
+        return track
+
+    def test_assignment_is_unique(self):
+        from scheduling.models import TeacherStudentAssignment
+        from scheduling.services.roster import set_student_teachers
+
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+        self.assertEqual(
+            TeacherStudentAssignment.objects.filter(teacher=self.teacher, student=self.student).count(),
+            1,
+        )
+
+    def test_teacher_students_list_is_roster_not_studio(self):
+        from scheduling.services.roster import set_student_teachers
+
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+        res = self.client.get('/api/teacher/students/', **self._auth(self.teacher))
+        self.assertEqual(res.status_code, 200)
+        ids = {row['id'] for row in res.json()}
+        self.assertEqual(ids, {self.student.id})
+
+    def test_unassigned_teacher_cannot_skip(self):
+        from scheduling.services.curriculum import enroll_student
+
+        track = self._template()
+        enroll_student(self.student, track)
+        module = track.modules.first()
+        res = self.client.post(
+            f'/api/teacher/curriculum/modules/{module.id}/progress/',
+            {'student_id': self.student.id, 'status': 'skipped'},
+            content_type='application/json',
+            **self._auth(self.other_teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_assigned_teacher_can_skip(self):
+        from scheduling.models import StudentModuleProgress
+        from scheduling.services.curriculum import enroll_student
+        from scheduling.services.roster import set_student_teachers
+
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+        track = self._template()
+        enroll_student(self.student, track)
+        module = track.modules.order_by('sort_order').first()
+        res = self.client.post(
+            f'/api/teacher/curriculum/modules/{module.id}/progress/',
+            {'student_id': self.student.id, 'status': 'skipped'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['status'], StudentModuleProgress.STATUS_SKIPPED)
+        self.assertTrue(res.json()['enrollment']['track']['modules'][1]['is_current'])
+
+    def test_student_enrolls_in_template(self):
+        track = self._template()
+        res = self.client.post(
+            '/api/curriculum/me/',
+            {'track_id': track.id},
+            content_type='application/json',
+            **self._auth(self.student),
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()['enrollment']['track']['id'], track.id)
+
+    def test_one_active_enrollment(self):
+        from scheduling.models import StudentCurriculum
+        from scheduling.services.curriculum import create_track, enroll_student
+
+        first = self._template()
+        second, err = create_track(
+            title='Path B',
+            is_template=True,
+            modules=[{'title': 'Solo', 'sort_order': 0}],
+        )
+        self.assertIsNone(err)
+        enroll_student(self.student, first)
+        enroll_student(self.student, second)
+        self.assertEqual(StudentCurriculum.objects.filter(student=self.student, is_active=True).count(), 1)
+        self.assertEqual(
+            StudentCurriculum.objects.get(student=self.student, is_active=True).track_id,
+            second.id,
+        )
+
+    def test_bulk_custom_track_enrolls_roster_students(self):
+        from scheduling.services.roster import set_student_teachers
+
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+        set_student_teachers(self.student_b, [self.teacher.id], staff_user=self.staff)
+        res = self.client.post(
+            '/api/teacher/curriculum/tracks/',
+            {
+                'title': 'Custom duo',
+                'modules': [{'title': 'Warmup'}, {'title': 'Review'}],
+                'student_ids': [self.student.id, self.student_b.id],
+            },
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()['enrolled_count'], 2)
+        mine = self.client.get('/api/curriculum/me/', **self._auth(self.student))
+        self.assertEqual(mine.json()['enrollment']['track']['title'], 'Custom duo')
+
+    def test_staff_assign_teachers_on_student(self):
+        res = self.client.put(
+            f'/api/staff/students/{self.student.id}/teachers/',
+            {'teacher_ids': [self.teacher.id]},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual([row['id'] for row in res.json()], [self.teacher.id])
+
+    def test_manage_curriculum_required_to_skip(self):
+        from scheduling.services.curriculum import enroll_student
+        from scheduling.services.roster import set_student_teachers
+        from scheduling.services.teacher_permissions import set_teacher_permissions
+
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+        set_teacher_permissions(self.teacher, {'manage_curriculum': False})
+        track = self._template()
+        enroll_student(self.student, track)
+        module = track.modules.first()
+        res = self.client.post(
+            f'/api/teacher/curriculum/modules/{module.id}/progress/',
+            {'student_id': self.student.id, 'status': 'skipped'},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+

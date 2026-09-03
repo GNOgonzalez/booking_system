@@ -46,6 +46,12 @@ from scheduling.services.membership_admin import (
 )
 from scheduling.services.payments import payment_settings_status
 from scheduling.services.reports import staff_reports
+from scheduling.services.roster import (
+    set_student_teachers,
+    set_teacher_students,
+    students_for_teacher,
+    teachers_for_student,
+)
 from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
 from scheduling.services.staff import (
     get_teacher,
@@ -416,14 +422,47 @@ class StaffTeacherStudentListView(StaffTeacherMixin, generics.ListAPIView):
     serializer_class = StudentOptionSerializer
 
     def get_queryset(self):
-        if self.get_teacher() is None:
+        teacher = self.get_teacher()
+        if teacher is None:
             return User.objects.none()
-        return User.objects.filter(groups__name='student', is_active=True).order_by('username')
+        if self.request.query_params.get('all') in ('1', 'true'):
+            return User.objects.filter(groups__name='student', is_active=True).order_by('username')
+        return students_for_teacher(teacher).filter(is_active=True)
 
     def list(self, request, *args, **kwargs):
         if self.get_teacher() is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
         return super().list(request, *args, **kwargs)
+
+    def put(self, request, *args, **kwargs):
+        teacher = self.get_teacher()
+        if teacher is None:
+            return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        ids = request.data.get('student_ids')
+        if not isinstance(ids, list):
+            return Response({'detail': 'student_ids must be a list.'}, status=status.HTTP_400_BAD_REQUEST)
+        rows = set_teacher_students(teacher, ids, staff_user=request.user)
+        return Response(StudentOptionSerializer(rows, many=True).data)
+
+
+class StaffStudentTeachersView(APIView):
+    permission_classes = [IsStaff]
+
+    def get(self, request, student_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TeacherOptionSerializer(teachers_for_student(student), many=True).data)
+
+    def put(self, request, student_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        ids = request.data.get('teacher_ids')
+        if not isinstance(ids, list):
+            return Response({'detail': 'teacher_ids must be a list.'}, status=status.HTTP_400_BAD_REQUEST)
+        rows = set_student_teachers(student, ids, staff_user=request.user)
+        return Response(TeacherOptionSerializer(rows, many=True).data)
 
 
 class StaffTeacherPermissionsView(StaffTeacherMixin, APIView):
@@ -670,6 +709,17 @@ class StaffPaymentSettingsView(APIView):
     def get(self, request):
         base_url = f'{request.scheme}://{request.get_host()}'
         return Response(payment_settings_status(base_url=base_url))
+
+
+class StaffIntegrationsView(APIView):
+    """Read-only view of email + Google configuration (never returns secrets)."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        from scheduling.services.integrations_status import integrations_status
+
+        return Response(integrations_status())
 
 
 class StaffActivityLogView(APIView):

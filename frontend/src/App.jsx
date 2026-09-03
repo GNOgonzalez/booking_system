@@ -22,18 +22,23 @@ const TeacherAvailabilityPage = lazy(() => import('./pages/TeacherAvailabilityPa
 const TeacherClassesPage = lazy(() => import('./pages/TeacherClassesPage.jsx'))
 const TeacherProgressPage = lazy(() => import('./pages/TeacherProgressPage.jsx'))
 const TeacherHomeworkPage = lazy(() => import('./pages/TeacherHomeworkPage.jsx'))
+const TeacherCurriculumPage = lazy(() => import('./pages/TeacherCurriculumPage.jsx'))
 const TeacherClassRequestsPage = lazy(() => import('./pages/TeacherClassRequestsPage.jsx'))
 const StaffDashboardPage = lazy(() => import('./pages/StaffDashboardPage.jsx'))
 const StaffMetricsPage = lazy(() => import('./pages/StaffMetricsPage.jsx'))
 const StaffSchedulePage = lazy(() => import('./pages/StaffSchedulePage.jsx'))
 const StaffTeacherLayout = lazy(() => import('./pages/StaffTeacherLayout.jsx'))
 const StaffClassCatalogPage = lazy(() => import('./pages/StaffClassCatalogPage.jsx'))
+const StaffCurriculumPage = lazy(() => import('./pages/StaffCurriculumPage.jsx'))
 const StaffCreateClassPage = lazy(() => import('./pages/StaffCreateClassPage.jsx'))
+const StaffClassRequestsPage = lazy(() => import('./pages/StaffClassRequestsPage.jsx'))
 const StaffStudentsPage = lazy(() => import('./pages/StaffStudentsPage.jsx'))
 const StaffStudentMembershipPage = lazy(() => import('./pages/StaffStudentMembershipPage.jsx'))
 const StaffPaymentsPage = lazy(() => import('./pages/StaffPaymentsPage.jsx'))
+const StaffIntegrationsPage = lazy(() => import('./pages/StaffIntegrationsPage.jsx'))
 const StaffActivityPage = lazy(() => import('./pages/StaffActivityPage.jsx'))
 const StaffTeacherPermissionsPage = lazy(() => import('./pages/StaffTeacherPermissionsPage.jsx'))
+const StaffTeacherStudentsPage = lazy(() => import('./pages/StaffTeacherStudentsPage.jsx'))
 const InboxPage = lazy(() => import('./pages/InboxPage.jsx'))
 const CurriculumPage = lazy(() => import('./pages/CurriculumPage.jsx'))
 const StaffGlossaryPage = lazy(() => import('./pages/StaffGlossaryPage.jsx'))
@@ -65,7 +70,7 @@ function MobileTopbar({ onOpen }) {
   )
 }
 
-function Sidebar({ me, onLogout, onClose }) {
+function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
   const { label, labels } = useGlossary()
   const { branding } = useBranding()
   const roles = me?.roles || []
@@ -78,10 +83,21 @@ function Sidebar({ me, onLogout, onClose }) {
   const canManageBlog = isStaff || (isTeacher && can('manage_blog'))
 
   return (
-    <aside className="sidebar">
-      <button type="button" className="sidebar-close" aria-label="Close menu" onClick={onClose}>
-        ×
-      </button>
+    <aside className="sidebar" aria-expanded={!collapsed}>
+      <div className="sidebar-toolbar">
+        <button type="button" className="sidebar-close" aria-label="Close menu" onClick={onClose}>
+          ×
+        </button>
+        <button
+          type="button"
+          className="sidebar-collapse-btn"
+          aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}
+          title={collapsed ? 'Expand menu' : 'Collapse menu'}
+          onClick={onToggleCollapse}
+        >
+          <span aria-hidden="true">{collapsed ? '›' : '‹'}</span>
+        </button>
+      </div>
       <div className="brand">
         {branding.logo_url && (
           <img src={branding.logo_url} alt="" className="branding-logo branding-logo--sidebar" />
@@ -111,11 +127,14 @@ function Sidebar({ me, onLogout, onClose }) {
           <div className="nav-section">Staff</div>
           <NavLink to="/staff" end className="nav-link">Dashboard</NavLink>
           <NavLink to="/staff/schedule" className="nav-link">{label('studio')} schedule</NavLink>
+          <NavLink to="/staff/requests" className="nav-link">Class requests</NavLink>
           <NavLink to="/staff/classes/new" className="nav-link">Create {label('class').toLowerCase()}</NavLink>
           <NavLink to="/staff/class-catalog" className="nav-link">Class roadmap</NavLink>
+          <NavLink to="/staff/curriculum" className="nav-link">Curriculum</NavLink>
           <NavLink to="/staff/students" className="nav-link">{labels('student')}</NavLink>
           <NavLink to="/staff/memberships" className="nav-link">Memberships</NavLink>
           <NavLink to="/staff/payments" className="nav-link">Payments</NavLink>
+          <NavLink to="/staff/integrations" className="nav-link">Integrations</NavLink>
           <NavLink to="/staff/reports" className="nav-link">Reports</NavLink>
           <NavLink to="/staff/activity" className="nav-link">Staff activity</NavLink>
           <NavLink to="/staff/metrics" className="nav-link">{label('studio')} {labels('metric').toLowerCase()}</NavLink>
@@ -141,6 +160,7 @@ function Sidebar({ me, onLogout, onClose }) {
           {can('assign_homework') && (
             <NavLink to="/teacher/homework" className="nav-link">Homework</NavLink>
           )}
+          <NavLink to="/teacher/curriculum" className="nav-link">Curriculum</NavLink>
         </>
       )}
 
@@ -152,7 +172,9 @@ function Sidebar({ me, onLogout, onClose }) {
       <div className="sidebar-footer">
         <div className="sidebar-user">
           {displayName}
-          {roles.length > 0 && <> · <span className="badge">{roles[0]}</span></>}
+          {roles.map((role) => (
+            <span key={role}> · <span className="badge">{role}</span></span>
+          ))}
         </div>
         <button type="button" className="ghost" onClick={onLogout}>Log out</button>
       </div>
@@ -163,57 +185,118 @@ function Sidebar({ me, onLogout, onClose }) {
 function HomePage({ me }) {
   const roles = me?.roles || []
   const { label, labels } = useGlossary()
-  const isStudentOnly = roles.includes('student') && !roles.includes('staff') && !roles.includes('teacher')
+  // Each role contributes its own section: someone who both teaches and studies gets both.
+  const isStudent = roles.includes('student')
   const isStaff = roles.includes('staff')
   const isTeacher = roles.includes('teacher')
+  const hasAnyRole = isStudent || isStaff || isTeacher
   const tp = me?.teacher_permissions
-  const canManageBlog = isStaff || (isTeacher && (!tp || tp.manage_blog !== false))
+  const can = (key) => !tp || tp[key] !== false
+  const canManageBlog = isStaff || (isTeacher && can('manage_blog'))
+
+  const intro = () => {
+    const parts = []
+    if (isStaff) {
+      parts.push(`manage ${labels('teacher').toLowerCase()}, schedules, and ${label('studio').toLowerCase()}-wide settings`)
+    }
+    if (isTeacher) {
+      parts.push(`run your ${labels('session').toLowerCase()} and ${label('student').toLowerCase()} progress`)
+    }
+    if (isStudent) {
+      parts.push('book lessons and track your own progress')
+    }
+    if (!parts.length) return 'Use the menu on the left to get started.'
+    if (parts.length === 1) return `Your home base to ${parts[0]}.`
+    return `Your home base to ${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}.`
+  }
 
   return (
     <div>
       <h1>Welcome{me?.display_name ? `, ${me.display_name}` : ''}</h1>
-      <p className="page-intro">
-        {roles.includes('staff')
-          ? `Manage ${labels('teacher').toLowerCase()}, schedules, ${labels('class').toLowerCase()}, and ${label('studio').toLowerCase()}-wide settings.`
-          : roles.includes('teacher')
-            ? `Manage your ${labels('session').toLowerCase()}, ${label('availability').toLowerCase()}, and ${label('student').toLowerCase()} progress.`
-            : `Your home base for booking lessons, tracking progress, and managing your membership.`}
-      </p>
+      <p className="page-intro">{intro()}</p>
 
       <BlogFeed canManage={canManageBlog} />
 
       <OnboardingChecklist />
 
-      {isStudentOnly && (
+      {isStudent && (
         <Suspense fallback={<PageLoader />}>
           <StudentHomeDashboard />
         </Suspense>
       )}
-      {roles.includes('staff') && (
+
+      {isStaff && (
         <div className="card">
           <div className="card-title">Staff tools</div>
           <p className="card-meta">
-            Open the staff dashboard to manage any teacher&apos;s schedule and edit metric names.
+            Manage any teacher&apos;s schedule, approve class requests, and edit metric names.
           </p>
-          <NavLink to="/staff" className="btn secondary">Open staff dashboard</NavLink>
+          <div className="form-actions">
+            <NavLink to="/staff" className="btn secondary">Open staff dashboard</NavLink>
+            <NavLink to="/staff/requests" className="btn secondary">Pending class requests</NavLink>
+          </div>
         </div>
       )}
-      {!roles.includes('staff') && !isStudentOnly && (
-      <div className="card">
-        <div className="card-title">Getting started</div>
-        <p className="card-meta">Use the menu on the left to navigate. Your role determines what you can do.</p>
-      </div>
+
+      {isTeacher && (
+        <div className="card">
+          <div className="card-title">{label('teacher')} tools</div>
+          <p className="card-meta">
+            Your {labels('session').toLowerCase()}, class requests, and {label('student').toLowerCase()} reports.
+          </p>
+          <div className="form-actions">
+            <NavLink to="/teacher/sessions" className="btn secondary">
+              My {labels('session').toLowerCase()}
+            </NavLink>
+            <NavLink to="/teacher/requests" className="btn secondary">Class requests</NavLink>
+            {can('manage_schedule') && (
+              <NavLink to="/teacher/sessions/new" className="btn secondary">
+                New {label('session').toLowerCase()}
+              </NavLink>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!hasAnyRole && (
+        <div className="card">
+          <div className="card-title">Getting started</div>
+          <p className="card-meta">
+            Your account has no role yet. Ask staff to add you as a {label('student').toLowerCase()}.
+          </p>
+        </div>
       )}
     </div>
   )
 }
 
+const SIDEBAR_COLLAPSED_KEY = 'sidebarCollapsed'
+
 function AppRoutes() {
   const navigate = useNavigate()
   const location = useLocation()
   const [navOpen, setNavOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [authed, setAuthed] = useState(Boolean(getTokens().access))
   const [me, setMe] = useState(null)
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0')
+      } catch {
+        // ignore quota / private mode
+      }
+      return next
+    })
+  }
 
   useEffect(() => {
     setNavOpen(false)
@@ -291,7 +374,7 @@ function AppRoutes() {
 
   return (
     <GlossaryProvider>
-      <div className={`app-shell${navOpen ? ' nav-open' : ''}`}>
+      <div className={`app-shell${navOpen ? ' nav-open' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         <MobileTopbar onOpen={() => setNavOpen(true)} />
         <button
           type="button"
@@ -300,7 +383,13 @@ function AppRoutes() {
           tabIndex={navOpen ? 0 : -1}
           onClick={() => setNavOpen(false)}
         />
-        <Sidebar me={me} onLogout={handleLogout} onClose={() => setNavOpen(false)} />
+        <Sidebar
+          me={me}
+          onLogout={handleLogout}
+          onClose={() => setNavOpen(false)}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapsed}
+        />
         <main className="main">
           <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -319,14 +408,18 @@ function AppRoutes() {
               <Route path="/teacher/availability" element={<TeacherAvailabilityPage />} />
               <Route path="/teacher/progress" element={<TeacherProgressPage />} />
               <Route path="/teacher/homework" element={<TeacherHomeworkPage />} />
+              <Route path="/teacher/curriculum" element={<TeacherCurriculumPage />} />
               <Route path="/staff" element={<StaffDashboardPage />} />
               <Route path="/staff/schedule" element={<StaffSchedulePage />} />
+              <Route path="/staff/requests" element={<StaffClassRequestsPage />} />
               <Route path="/staff/classes/new" element={<StaffCreateClassPage />} />
               <Route path="/staff/class-catalog" element={<StaffClassCatalogPage />} />
+              <Route path="/staff/curriculum" element={<StaffCurriculumPage />} />
               <Route path="/staff/students" element={<StaffStudentsPage />} />
               <Route path="/staff/students/:studentId" element={<StaffStudentMembershipPage />} />
               <Route path="/staff/memberships" element={<StaffMembershipPlansPage />} />
               <Route path="/staff/payments" element={<StaffPaymentsPage />} />
+              <Route path="/staff/integrations" element={<StaffIntegrationsPage />} />
               <Route path="/staff/activity" element={<StaffActivityPage />} />
               <Route path="/staff/reports" element={<StaffReportsPage />} />
               <Route path="/staff/metrics" element={<StaffMetricsPage />} />
@@ -342,6 +435,8 @@ function AppRoutes() {
                 <Route path="availability" element={<TeacherAvailabilityPage />} />
                 <Route path="progress" element={<TeacherProgressPage />} />
                 <Route path="homework" element={<TeacherHomeworkPage />} />
+                <Route path="curriculum" element={<TeacherCurriculumPage />} />
+                <Route path="students" element={<StaffTeacherStudentsPage />} />
                 <Route path="permissions" element={<StaffTeacherPermissionsPage />} />
               </Route>
               <Route path="/inbox" element={<InboxPage />} />

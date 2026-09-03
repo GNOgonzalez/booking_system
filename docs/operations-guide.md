@@ -1,6 +1,6 @@
 # Operations guide
 
-**Last updated:** 2026-07-06  
+**Last updated:** 2026-08-27  
 **Audience:** Engineers and operators deploying or maintaining the app
 
 Install, configure, deploy, and run the booking & scheduling stack. For system design see [`architecture-and-roadmap.md`](./architecture-and-roadmap.md). For a plain-English code tour see [`learn-the-app.md`](./learn-the-app.md).
@@ -432,13 +432,17 @@ Without Google credentials, sessions still get placeholder Meet URLs.
 
 | Task | Command / action | Frequency |
 |------|------------------|-----------|
-| Database backup | `pg_dump` or provider snapshots | Daily |
-| Purge expired homework files | `python manage.py purge_expired_homework` | Daily (cron) |
+| Database backup | `./scripts/backup_db.sh` or provider snapshots | Daily |
+| Purge expired homework files | Container start (`scripts/start.sh`) + lazy purge on homework list | On boot (Render Free); cron once you have a paid instance |
 | OS / dependency security updates | `pip`, `npm`, base image | Monthly |
 | Review Stripe webhook logs | Stripe Dashboard | After payment issues |
 | Disk usage on `media/` | Monitor volume | Monthly |
 
-**Cron example:**
+**Render Free:** there is no cron. `scripts/start.sh` runs `purge_expired_homework` after migrate. Free instances spin down on idle and restart on the next request, so this fires regularly. Keep the lazy purge on homework list/download as the in-session backstop.
+
+Do **not** run the purge from GitHub Actions against the production database: it would clear the file pointers in Postgres while `MEDIA_ROOT` is the runner's empty directory, leaving orphaned files on Render.
+
+**Paid instance cron** (once you have a persistent disk):
 
 ```cron
 0 3 * * * cd /app && /app/.venv/bin/python manage.py purge_expired_homework >> /var/log/booking-purge.log 2>&1
@@ -470,23 +474,58 @@ cd frontend && npm run build
 
 ### 10.3 Backups and recovery
 
-**Backup:**
+**Supabase Free has no managed backups.** Pro ($25/mo) keeps 7 days of daily snapshots in the dashboard (Database → Backups). Until you upgrade, take your own off-site dumps.
+
+**Logical dump (works on Free or Pro):**
 
 ```bash
-pg_dump -h $DB_HOST -U $DB_USER -Fc $DB_NAME > backup_$(date +%F).dump
-# Also backup media/ volume (homework, branding, blog images)
-tar czf media_$(date +%F).tar.gz media/
+# pg_dump must be ≥ Supabase's Postgres major version (currently 17).
+# macOS: brew upgrade libpq && brew link --force libpq
+
+# From the repo root — reads DATABASE_URL from .env
+./scripts/backup_db.sh              # writes backups/YYYY-MM-DD_HHMMSS_host.dump
+./scripts/backup_db.sh --keep 14    # also delete dumps older than 14 days
 ```
 
-**Restore Postgres:**
+`backups/` is gitignored (dumps contain student PII). Copy a recent dump somewhere off your laptop too (encrypted drive, object storage).
+
+**Daily cron on your Mac** (optional):
+
+```cron
+0 3 * * * cd /Users/YOU/repos/booking_scheduling_app && ./scripts/backup_db.sh --keep 14 >> /tmp/booking-backup.log 2>&1
+```
+
+**Restore Postgres** (practise on a staging DB first — this drops objects in the target):
 
 ```bash
-pg_restore -h $DB_HOST -U $DB_USER -d $DB_NAME --clean backup_YYYY-MM-DD.dump
+./scripts/restore_db.sh backups/YYYY-MM-DD_HHMMSS_host.dump
+# prompts you to type the target hostname before continuing
+```
+
+**Media files** are separate from the database. On Render’s ephemeral disk they do not survive a redeploy — attach a persistent disk (or S3) first, then:
+
+```bash
+tar czf backups/media_$(date +%F).tar.gz media/
 ```
 
 Restore `media/` to the same path configured as `MEDIA_ROOT`.
 
-### 10.4 User administration
+### 10.4 Free-plan operations (Render + Supabase)
+
+What this stack does today without a paid instance:
+
+| Piece | How it works on free |
+|-------|----------------------|
+| Health check | Render probes `GET /healthz` — process only, no database. `/readyz` checks Postgres separately; do not point Render at it, or a paused Supabase project becomes a restart loop. |
+| Homework purge | `scripts/start.sh` after migrate. Files live on the ephemeral disk. |
+| Gunicorn | `WEB_CONCURRENCY=2` (512 MB). Raise later without a code change. |
+| Logging | stdout, `LOG_LEVEL` (default `INFO`). |
+| Sentry | Set `SENTRY_DSN` when you want it; unset keeps it inert. |
+| Backups | `./scripts/backup_db.sh` — Supabase Free has no managed snapshots. |
+
+What changes when you upgrade: a persistent disk (or S3) for media, a Render cron instead of on-boot purge, a paid instance to remove ~50s cold starts, and Supabase Pro for dashboard restores.
+
+### 10.5 User administration
 
 | Need | How |
 |------|-----|

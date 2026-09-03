@@ -1,6 +1,9 @@
-# Fallback demo reset via GitHub Actions (if Render cron is unavailable).
-# Requires secrets: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, SECRET_KEY
+# Nightly demo reset. Render Free has no cron, so GitHub Actions runs it.
+# Requires secrets: DATABASE_URL, SECRET_KEY
 # Set repository variable USE_GITHUB_DEMO_RESET=true to enable.
+#
+# This only touches the database. Homework files live on Render's ephemeral disk
+# and are purged on container start instead (see scripts/start.sh).
 
 name: Reset demo sandbox
 
@@ -17,15 +20,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - run: pip install -r requirements.txt
       - name: Reset demo data
         env:
           DEBUG: 'False'
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_PORT: '5432'
-        run: python manage.py bootstrap_sandbox --demo --reset
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python manage.py bootstrap_sandbox --demo --reset --showcase

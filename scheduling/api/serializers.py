@@ -43,6 +43,7 @@ class SessionSerializer(serializers.ModelSerializer):
     confirmed_count = serializers.SerializerMethodField()
     ticket_cost = serializers.SerializerMethodField()
     student_booked = serializers.SerializerMethodField()
+    students = serializers.SerializerMethodField()
 
     class Meta:
         model = Session
@@ -68,6 +69,7 @@ class SessionSerializer(serializers.ModelSerializer):
             'confirmed_count',
             'ticket_cost',
             'student_booked',
+            'students',
         ]
         read_only_fields = ['status', 'meeting_url', 'title', 'teacher', 'meeting_provider_display']
 
@@ -92,6 +94,15 @@ class SessionSerializer(serializers.ModelSerializer):
         if annotated is not None:
             return bool(annotated)
         return False
+
+    def get_students(self, obj):
+        bookings = getattr(obj, 'confirmed_bookings', None)
+        if bookings is None:
+            bookings = obj.bookings.filter(status='confirmed').select_related('student')
+        return [
+            {'id': booking.student_id, 'username': booking.student.username}
+            for booking in bookings
+        ]
 
     def _catalog_teacher(self):
         return self.context.get('acting_teacher') or self.context['request'].user

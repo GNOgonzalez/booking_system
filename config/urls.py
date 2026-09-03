@@ -3,11 +3,17 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from config.health import healthz, readyz
 from scheduling import views
 from scheduling.api.google_views import google_oauth_callback
 
 urlpatterns = [
     path('', views.home, name='home'),
+    # Both spellings: health checkers differ on the trailing slash.
+    path('healthz', healthz, name='healthz'),
+    path('healthz/', healthz),
+    path('readyz', readyz, name='readyz'),
+    path('readyz/', readyz),
     path('admin/', admin.site.urls),
     path('accounts/', include('django.contrib.auth.urls')),
     path('api/', include('scheduling.api.urls')),

@@ -17,14 +17,18 @@ export default function TeacherSessionsPage() {
   }, [paths.sessions])
 
   const refreshSession = (updated) => {
-    setSessions((rows) => rows.map((s) => (s.id === updated.id ? updated : s)))
+    setSessions((rows) => rows.map((s) => (
+      s.id === updated.id
+        ? { ...s, ...updated, students: updated.students || s.students }
+        : s
+    )))
   }
 
   return (
     <div className={isStaff ? '' : 'page-calendar'}>
       {!isStaff && <h1>My sessions</h1>}
       {!isStaff && (
-        <p className="page-intro">Your teaching schedule in calendar view. Click a session to open its details.</p>
+        <p className="page-intro">Your teaching schedule. Filter by student or class, or switch to list view.</p>
       )}
       {error && <div className="error">{error}</div>}
       {!error && (

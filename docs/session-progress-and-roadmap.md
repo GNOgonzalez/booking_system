@@ -158,7 +158,7 @@ student   → book, membership, progress, homework, own requests only
 
 Full matrix: [`staff-sandbox-audit.md`](./staff-sandbox-audit.md). **All four phases are done** —
 no day-to-day studio operation needs Django admin or a shell. TICKET-002 → TICKET-007 are closed
-in [`learn/TICKETS.md`](./learn/TICKETS.md); TICKET-008 → TICKET-010 carry the leftovers.
+in [`learn/TICKETS.md`](./learn/TICKETS.md); TICKET-008 → TICKET-010 are closed.
 
 | # | Task | Status |
 |---|------|--------|
@@ -167,11 +167,11 @@ in [`learn/TICKETS.md`](./learn/TICKETS.md); TICKET-008 → TICKET-010 carry the
 | 3 | **Staff delete where only add exists** — class roadmap | **Done** — rename / hide / delete with in-use guards |
 | 4 | **Staff cancel any booking** | **Done** — `POST staff/bookings/<id>/cancel/` with a refund choice |
 | 5 | **Staff → Payments / Stripe** | **Done** — read-only `/staff/payments` (keys stay in env) |
-| 6 | **Staff manage integrations** — Google + email status | Open — payments panel is the pattern to copy |
+| 6 | **Staff manage integrations** — Google + email status | **Done** — read-only `/staff/integrations` |
 | 7 | **User lifecycle** | **Done** — staff create teachers *and* students, reset passwords, deactivate |
 | 8 | **Remove Django admin dependency** | **Done** — `demo_staff` not superuser; password reset was the last admin-only flow |
-| 9 | **Multi-role users** | Open — TICKET-009 |
-| 10 | **Teacher permission enforcement** | Open — TICKET-010 |
+| 9 | **Multi-role users** | **Done** — TICKET-009; Home stacks every matching role |
+| 10 | **Teacher permission enforcement** | **Done** — TICKET-010; every teacher write now checks its `teacher_can` flag |
 
 **Money controls (Phase 2)** deliberately stop short of editing Stripe keys or issuing refunds:
 keys would have to be stored in the database, and Stripe's dashboard owns the real ledger.
@@ -184,15 +184,15 @@ still balance, and every override lands in the `/staff/activity` audit log.
 |---|------|--------|
 | 11 | Teacher denied actions show clear 403 + UI disable | Match staff-granted flags in nav (hide what they can’t do) |
 | 12 | Class request history for students | Pending / approved / cancelled |
-| 13 | Staff view of all pending requests studio-wide | Optional aggregate beyond per-teacher drill-down |
+| 13 | Staff view of all pending requests studio-wide | **Done** — TICKET-008, `/staff/requests` |
 
 #### 1C — Integrations (functional, not polish)
 
 | Integration | Functional next step |
 |-------------|---------------------|
 | **Stripe** | Staff UI + webhook URL display; students checkout when live |
-| **Email** | Staff-visible mode (console / SMTP / provider) |
-| **Google** | Studio OAuth status; teachers connect calendar |
+| **Email** | **Done** — staff integrations page shows console vs SMTP |
+| **Google** | **Done** — studio OAuth status + which teachers connected |
 | **Deploy** | Gakko Studio on Render + Supabase — **done**; document re-seed |
 
 #### Deferred (after Tier 1 stable)

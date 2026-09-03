@@ -35,13 +35,24 @@ export default function StaffStudentMembershipPage() {
   const [ticketForm, setTicketForm] = useState({})
   const [note, setNote] = useState('')
   const [password, setPassword] = useState('')
+  const [studioTeachers, setStudioTeachers] = useState([])
+  const [assignedTeacherIds, setAssignedTeacherIds] = useState([])
+  const [savingTeachers, setSavingTeachers] = useState(false)
 
   const basePath = `/api/staff/students/${studentId}/membership/`
 
   const load = () => {
     setLoading(true)
-    apiFetch(basePath)
-      .then(setData)
+    Promise.all([
+      apiFetch(basePath),
+      apiFetch('/api/staff/teachers/'),
+      apiFetch(`/api/staff/students/${studentId}/teachers/`),
+    ])
+      .then(([membership, teacherRows, assigned]) => {
+        setData(membership)
+        setStudioTeachers(teacherRows.filter((row) => row.is_active !== false))
+        setAssignedTeacherIds(assigned.map((row) => row.id))
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }
@@ -132,6 +143,25 @@ export default function StaffStudentMembershipPage() {
     if (ok) setPassword('')
   }
 
+  const saveTeachers = async (e) => {
+    e.preventDefault()
+    setSavingTeachers(true)
+    setError('')
+    setMessage('')
+    try {
+      const saved = await apiFetch(`/api/staff/students/${studentId}/teachers/`, {
+        method: 'PUT',
+        body: JSON.stringify({ teacher_ids: assignedTeacherIds }),
+      })
+      setAssignedTeacherIds(saved.map((row) => row.id))
+      setMessage('Assigned teachers saved.')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSavingTeachers(false)
+    }
+  }
+
   if (loading) return <p className="page-intro">Loading {label('student').toLowerCase()}…</p>
   if (!data) return <div className="error">{error || 'Not found.'}</div>
 
@@ -149,6 +179,36 @@ export default function StaffStudentMembershipPage() {
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
+
+      <form onSubmit={saveTeachers} className="card">
+        <div className="card-title">Assigned {labels('teacher').toLowerCase()}</div>
+        <p className="card-meta">
+          These {labels('teacher').toLowerCase()} can edit this {label('student').toLowerCase()}&apos;s
+          curriculum. Anyone who has already taught them can as well.
+        </p>
+        {studioTeachers.map((teacher) => (
+          <label key={teacher.id} className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={assignedTeacherIds.includes(teacher.id)}
+              onChange={() => setAssignedTeacherIds((current) => (
+                current.includes(teacher.id)
+                  ? current.filter((id) => id !== teacher.id)
+                  : [...current, teacher.id]
+              ))}
+            />
+            {teacher.label}
+          </label>
+        ))}
+        {!studioTeachers.length && (
+          <p className="card-meta">No {labels('teacher').toLowerCase()} in the studio yet.</p>
+        )}
+        <div className="form-actions">
+          <button type="submit" disabled={savingTeachers || busy}>
+            {savingTeachers ? 'Saving…' : 'Save teachers'}
+          </button>
+        </div>
+      </form>
 
       <div className="card">
         <div className="field">

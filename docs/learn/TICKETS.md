@@ -54,46 +54,43 @@ Use this file like your crud_project ticket system when you debug and adjust the
 
 ---
 
+## Done
+
 ### TICKET-008 — Staff cannot see a studio-wide pending class request queue
-**Status:** open  
+**Status:** done  
 **Area:** frontend  
-**Reported:** 2026-08-26
+**Reported:** 2026-08-26 · **Closed:** 2026-08-27
 
-**Expected:** Staff see every pending class request in one list instead of drilling into each teacher.  
-**Actual:** Requests are only reachable per teacher at `/staff/teachers/<id>/class-requests/`.  
-**Steps:** Log in as `demo_staff` → no aggregate request queue.
-
-**Notes / fix:** Aggregate endpoint over `ClassRequest` plus a staff page; approve/deny reuse the existing per-teacher services.
+**Notes / fix:** `pending_requests_studio()` returns every pending `ClassRequest` once (open-pool rows are not duplicated per matching teacher). `GET /api/staff/class-requests/` includes `candidate_teachers` so staff can claim an open request. Approve/deny reuse `/api/staff/teachers/<id>/class-requests/<pk>/…`. UI at `/staff/requests`. Covered by `StaffClassRequestQueueTests`.
 
 ---
 
 ### TICKET-009 — Multi-role users only see one dashboard
-**Status:** open  
+**Status:** done  
 **Area:** frontend  
-**Reported:** 2026-08-26
+**Reported:** 2026-08-26 · **Closed:** 2026-08-27
 
-**Expected:** A user in both `teacher` and `student` groups sees both home sections.  
-**Actual:** The student dashboard is hidden when the user is also a teacher.  
-**Steps:** Add a user to both groups, log in, and the student hub disappears.
-
-**Notes / fix:** Home page should compose per-role sections rather than picking one. Check `App.jsx` role branching.
+**Notes / fix:** `HomePage` in `App.jsx` now stacks sections independently: student dashboard if `student`, staff tools if `staff`, teacher tools if `teacher`. Intro copy joins every role instead of picking one.
 
 ---
 
 ### TICKET-010 — Audit `IsTeacher` endpoints for missing `teacher_can` checks
-**Status:** open  
+**Status:** done  
 **Area:** api  
-**Reported:** 2026-08-26
+**Reported:** 2026-08-26 · **Closed:** 2026-08-26
 
 **Expected:** Every teacher write checks the staff-granted capability flag; staff bypasses it.  
-**Actual:** Some endpoints use `IsTeacher` alone, so a teacher without the flag may still write.  
-**Steps:** Grep `permission_classes = [IsTeacher]` and compare against `TEACHER_PERMISSION_DEFS`.
+**Actual:** Two gaps. `TeacherProgressListCreateView` (`progress/api/dashboard.py`) created `ProgressReport` rows with no `write_reports` check, while the equivalent `SessionFeedback` view did check. Separately, the class request approve / deny / delete views checked ownership but no capability at all — and approving *creates a Session*, so a teacher with `manage_schedule` switched off could still put lessons on the calendar by approving student requests.
 
-**Notes / fix:** Add a regression test per capability that a teacher without the flag gets 403 and staff gets 200.
+**Notes / fix:** Added the `teacher_can('write_reports')` guard to `perform_create`, matching the pattern in `progress/api/feedback.py`. Added `teacher_can('manage_schedule')` to `TeacherClassRequestApproveView`, `…DenyView`, and `…DeleteView`. Those three check `request.user` rather than the resolved teacher, so staff acting on a teacher's behalf still pass (`teacher_can` returns `True` for staff).
+
+Audited every other teacher view. The remaining ones without a `teacher_can` call are reads (student lists, availability preflight, scheduling slots, homework detail, own permission flags), so no flag applies.
+
+**Why the first pass missed the class request views:** the audit grepped for `permission_classes = [IsTeacher]`, and those three views use `IsTeacherOrStaff`. Grep by capability, not by permission class — any endpoint that writes on a teacher's behalf needs a flag regardless of which permission class guards it.
+
+Covered by `TeacherWriteReportsPermissionTests` (`progress/tests.py`) and `TeacherCapabilityEnforcementTests` (`scheduling/tests.py`), which revokes each of the five write capabilities in turn, asserts 403 and that nothing was persisted, and includes a positive control plus a staff-bypass case.
 
 ---
-
-## Done
 
 ### TICKET-002 — Staff cannot grant or adjust a student's membership / tickets
 **Status:** done  

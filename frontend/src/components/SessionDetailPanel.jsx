@@ -38,9 +38,16 @@ export default function SessionDetailPanel({
   const [editForm, setEditForm] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    if (!session || !apiPaths) return undefined
+  const studentsPath = session && apiPaths?.sessionStudents
+    ? apiPaths.sessionStudents(session.id)
+    : ''
+  const feedbackPath = apiPaths?.feedback || ''
+  const classesPath = showManageSession ? (apiPaths?.classes || '') : ''
 
+  useEffect(() => {
+    if (!session || !studentsPath || !feedbackPath) return undefined
+
+    let cancelled = false
     setShowReport(false)
     setEditing(false)
     setLoading(true)
@@ -48,11 +55,12 @@ export default function SessionDetailPanel({
     setMessage('')
 
     Promise.all([
-      apiFetch(apiPaths.sessionStudents(session.id)),
-      apiFetch(apiPaths.feedback),
-      showManageSession ? apiFetch(apiPaths.classes) : Promise.resolve([]),
+      apiFetch(studentsPath),
+      apiFetch(feedbackPath),
+      classesPath ? apiFetch(classesPath) : Promise.resolve([]),
     ])
       .then(([booked, allReports, classRows]) => {
+        if (cancelled) return
         setStudents(booked)
         setReports(allReports.filter((r) => r.session === session.id))
         setClasses(classRows)
@@ -63,9 +71,17 @@ export default function SessionDetailPanel({
           capacity: String(session.capacity),
         })
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }, [session, apiPaths, showManageSession])
+      .catch((err) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [session?.id, studentsPath, feedbackPath, classesPath])
 
   const saveSession = async (e) => {
     e.preventDefault()

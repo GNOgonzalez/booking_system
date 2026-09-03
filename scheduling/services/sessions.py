@@ -1,8 +1,8 @@
 """Session creation helpers."""
 
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
 
-from scheduling.models import ClassOffering, ClassTopic
+from scheduling.models import Booking, ClassOffering, ClassTopic
 
 
 def annotate_confirmed_count(queryset):
@@ -13,9 +13,12 @@ def annotate_confirmed_count(queryset):
 
 
 def sessions_for_list(queryset):
-    """List queryset with common select_related + confirmed_count annotation."""
+    """List queryset with common select_related + confirmed bookings, no N+1."""
+    confirmed = Booking.objects.filter(status='confirmed').select_related('student')
     return annotate_confirmed_count(
-        queryset.select_related('teacher', 'class_offering', 'class_topic'),
+        queryset.select_related('teacher', 'class_offering', 'class_topic').prefetch_related(
+            Prefetch('bookings', queryset=confirmed, to_attr='confirmed_bookings'),
+        ),
     )
 
 

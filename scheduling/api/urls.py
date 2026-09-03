@@ -6,6 +6,7 @@ from scheduling.api import (
     branding_views,
     class_catalog_views,
     class_request_views,
+    curriculum_views,
     google_views,
     staff_views,
     views,
@@ -73,6 +74,26 @@ urlpatterns = [
     ),
     path('teacher/students/', views.TeacherStudentListView.as_view(), name='api_teacher_students'),
     path(
+        'teacher/curriculum/students/',
+        curriculum_views.TeacherCurriculumStudentsView.as_view(),
+        name='api_teacher_curriculum_students',
+    ),
+    path(
+        'teacher/curriculum/tracks/',
+        curriculum_views.TeacherCurriculumTrackCreateView.as_view(),
+        name='api_teacher_curriculum_tracks',
+    ),
+    path(
+        'teacher/curriculum/students/<int:student_id>/enroll/',
+        curriculum_views.TeacherCurriculumEnrollView.as_view(),
+        name='api_teacher_curriculum_enroll',
+    ),
+    path(
+        'teacher/curriculum/modules/<int:module_id>/progress/',
+        curriculum_views.TeacherCurriculumModuleProgressView.as_view(),
+        name='api_teacher_curriculum_module_progress',
+    ),
+    path(
         'teacher/students/<int:student_id>/history/',
         TeacherStudentHistoryView.as_view(),
         name='api_teacher_student_history',
@@ -112,6 +133,12 @@ urlpatterns = [
     path('teacher/permissions/', views.TeacherPermissionsView.as_view(), name='api_teacher_permissions'),
     path('messages/', views.InboxListView.as_view(), name='api_inbox'),
     path('curriculum/', views.CurriculumListView.as_view(), name='api_curriculum'),
+    path('curriculum/me/', curriculum_views.StudentCurriculumMeView.as_view(), name='api_curriculum_me'),
+    path(
+        'curriculum/templates/',
+        curriculum_views.CurriculumTemplateListView.as_view(),
+        name='api_curriculum_templates',
+    ),
     path('membership/', views.MembershipView.as_view(), name='api_membership'),
     path('membership/plans/', views.MembershipPlanCatalogView.as_view(), name='api_membership_plans'),
     path('membership/payment-config/', views.MembershipPaymentConfigView.as_view(), name='api_membership_payment_config'),
@@ -135,6 +162,11 @@ urlpatterns = [
     path('staff/students/', staff_views.StaffStudentListView.as_view(), name='api_staff_students'),
     path('staff/students/<int:student_id>/', staff_views.StaffStudentDetailView.as_view(), name='api_staff_student_detail'),
     path(
+        'staff/students/<int:student_id>/teachers/',
+        staff_views.StaffStudentTeachersView.as_view(),
+        name='api_staff_student_teachers',
+    ),
+    path(
         'staff/students/<int:student_id>/password/',
         staff_views.StaffStudentPasswordResetView.as_view(),
         name='api_staff_student_password',
@@ -155,6 +187,7 @@ urlpatterns = [
         name='api_staff_booking_cancel',
     ),
     path('staff/payments/', staff_views.StaffPaymentSettingsView.as_view(), name='api_staff_payments'),
+    path('staff/integrations/', staff_views.StaffIntegrationsView.as_view(), name='api_staff_integrations'),
     path('staff/activity/', staff_views.StaffActivityLogView.as_view(), name='api_staff_activity'),
     path('staff/schedule/', staff_views.StaffOverallScheduleView.as_view(), name='api_staff_schedule'),
     path(
@@ -228,9 +261,34 @@ urlpatterns = [
         name='api_staff_teacher_students',
     ),
     path(
+        'staff/teachers/<int:teacher_id>/curriculum/students/',
+        curriculum_views.TeacherCurriculumStudentsView.as_view(),
+        name='api_staff_teacher_curriculum_students',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/tracks/',
+        curriculum_views.TeacherCurriculumTrackCreateView.as_view(),
+        name='api_staff_teacher_curriculum_tracks',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/students/<int:student_id>/enroll/',
+        curriculum_views.TeacherCurriculumEnrollView.as_view(),
+        name='api_staff_teacher_curriculum_enroll',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/modules/<int:module_id>/progress/',
+        curriculum_views.TeacherCurriculumModuleProgressView.as_view(),
+        name='api_staff_teacher_curriculum_module_progress',
+    ),
+    path(
         'staff/teachers/<int:teacher_id>/permissions/',
         staff_views.StaffTeacherPermissionsView.as_view(),
         name='api_staff_teacher_permissions',
+    ),
+    path(
+        'staff/class-requests/',
+        class_request_views.StaffClassRequestQueueView.as_view(),
+        name='api_staff_class_request_queue',
     ),
     path(
         'staff/teachers/<int:teacher_id>/class-requests/',
@@ -259,6 +317,12 @@ urlpatterns = [
     ),
     path('staff/classes/', staff_views.StaffCreateClassView.as_view(), name='api_staff_create_class'),
     path('staff/class-catalog/', class_catalog_views.StaffClassCatalogView.as_view(), name='api_staff_class_catalog'),
+    path('staff/curriculum/tracks/', curriculum_views.StaffCurriculumTrackListCreateView.as_view(), name='api_staff_curriculum_tracks'),
+    path(
+        'staff/curriculum/tracks/<int:pk>/',
+        curriculum_views.StaffCurriculumTrackDetailView.as_view(),
+        name='api_staff_curriculum_track_detail',
+    ),
     path(
         'staff/class-catalog/focuses/<int:focus_id>/topics/bulk/',
         class_catalog_views.StaffClassCatalogBulkTopicsView.as_view(),

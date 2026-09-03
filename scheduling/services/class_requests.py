@@ -554,6 +554,45 @@ def pending_requests_for_teacher(teacher):
     )
 
 
+def pending_requests_studio():
+    """Every pending request in the studio — the staff triage queue.
+
+    Unlike pending_requests_for_teacher this is a flat queryset: open-pool rows
+    appear once, not once per teacher whose catalog happens to match.
+    Soonest lesson first, because those are the ones that need a decision.
+    """
+    return (
+        ClassRequest.objects.filter(status=ClassRequest.STATUS_PENDING)
+        .select_related('student', 'teacher', 'class_offering', 'class_topic', 'membership')
+        .order_by('start_time')
+    )
+
+
+def candidate_teachers_for_request(request):
+    """Teachers who could take this request — used by staff to claim an open-pool row."""
+    if not request.open_to_any_teacher or request.teacher_id is not None:
+        return []
+    offerings = (
+        ClassOffering.objects.filter(
+            is_active=True,
+            subject=request.subject,
+            level=request.level,
+            focus=request.focus,
+            teacher__is_active=True,
+        )
+        .select_related('teacher')
+        .order_by('teacher__username')
+    )
+    seen = set()
+    teachers = []
+    for offering in offerings:
+        if offering.teacher_id in seen:
+            continue
+        seen.add(offering.teacher_id)
+        teachers.append(offering.teacher)
+    return teachers
+
+
 def requests_for_student(user):
     return (
         ClassRequest.objects.filter(student=user)

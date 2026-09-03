@@ -146,11 +146,23 @@ docs/glossary.md
 | PATCH | `staff/students/<id>/membership/<mid>/` (tickets, expiry, cancel) | staff |
 | POST | `staff/bookings/<id>/cancel/` (with refund choice) | staff |
 | GET | `staff/payments/` (mode + Stripe status; no secrets) | staff |
+| GET | `staff/integrations/` (email + Google status; no secrets) | staff |
 | GET | `staff/activity/` (staff override audit log) | staff |
+| GET | `staff/class-requests/` (studio-wide pending queue) | staff |
 | GET | `staff/alerts/` | staff |
 | POST | `staff/alerts/mark-read/` | staff |
 | PATCH | `staff/teachers/<id>/`, `staff/students/<id>/` | staff |
 | GET/PATCH | `staff/glossary/` | staff |
+| GET/PUT | `staff/students/<id>/teachers/` | staff |
+| GET/PUT | `staff/teachers/<id>/students/` (`?all=1` for full studio list) | staff |
+| GET/POST | `staff/curriculum/tracks/` | staff |
+| PATCH/DELETE | `staff/curriculum/tracks/<id>/` | staff |
+| GET | `teacher/curriculum/students/` | teacher |
+| POST | `teacher/curriculum/tracks/` | teacher (+ `manage_curriculum`) |
+| POST | `teacher/curriculum/students/<id>/enroll/` | teacher (+ `manage_curriculum`) |
+| POST | `teacher/curriculum/modules/<id>/progress/` | teacher (+ `manage_curriculum`) |
+| GET/POST | `curriculum/me/` | student |
+| GET | `curriculum/templates/` | authenticated |
 | GET/PATCH | `staff/llm/` | staff |
 | POST | `staff/llm/test/` | staff |
 | POST | `teacher/ai/suggest-feedback/` | teacher (+ `use_ai`) |
@@ -192,6 +204,8 @@ Browsable API: http://127.0.0.1:8000/api/
 | `manage_availability` | Edit availability blocks |
 | `write_reports` | Session feedback |
 | `assign_homework` | File exchange + journal prompts |
+| `manage_curriculum` | Edit assigned students' learning paths |
+| `manage_blog` | Home-page blog posts |
 | `use_ai` | AI-assisted session note drafting |
 
 ---

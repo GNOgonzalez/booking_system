@@ -9,6 +9,7 @@ TEACHER_PERMISSION_DEFS = [
     ('manage_availability', 'Set availability', 'Edit weekly and special-day availability'),
     ('write_reports', 'Write reports', 'Submit session feedback for students'),
     ('assign_homework', 'Assign homework', 'Send files and journal prompts to students'),
+    ('manage_curriculum', 'Manage curriculum', 'Edit student learning paths and skip modules'),
     ('manage_blog', 'Manage blog', 'Publish announcements and photos on the home page'),
     ('use_ai', 'Use AI', 'Draft session notes and other AI-assisted writing'),
 ]

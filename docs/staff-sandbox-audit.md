@@ -4,7 +4,7 @@
 from the app itself — no Django admin, no shell, no `.env` edits for day-to-day work.
 
 Audited against `scheduling/api/urls.py`, `progress/api_urls.py`, and `frontend/src/App.jsx`.
-Last updated 2026-08-26 (Phases 1–4 complete).
+Last updated 2026-08-27 (Phases 1–4 complete; TICKET-008/009 closed).
 
 ---
 
@@ -50,7 +50,7 @@ Legend: **Yes** = staff can do it in the React app · **API** = endpoint exists,
 | Create / edit / cancel any teacher's sessions | Yes | Teacher-scoped mirror routes |
 | Manage any teacher's availability + special availability | Yes | |
 | View a session roster | Yes | |
-| Approve / deny / delete class requests | Yes | Per teacher; no studio-wide queue yet (TICKET-008) |
+| Approve / deny / delete class requests | Yes | Per teacher, plus studio-wide queue at `/staff/requests` |
 | Cancel a student's booking on their behalf | Yes | `POST /api/staff/bookings/<id>/cancel/` with a refund choice |
 
 ### Catalog
@@ -86,6 +86,8 @@ Legend: **Yes** = staff can do it in the React app · **API** = endpoint exists,
 | Sign-in branding (name + logo) | Yes | |
 | Score dimensions / metric names | Yes | |
 | AI provider config + connection test | Yes | `/staff/ai` |
+| Email + Google status | Yes | `/staff/integrations` — read-only, no secrets |
+| Email + Google status | Yes | `/staff/integrations` — read-only, no secrets |
 | Blog posts | Yes | |
 | Audit trail of staff overrides | Yes | `/staff/activity` |
 | Per-teacher feedback + homework oversight | API | Endpoints exist; no staff-facing screens |
@@ -110,13 +112,8 @@ inline on their panel. The log is append-only — nothing in the app edits or de
 ## 4. Remaining gaps
 
 The four phases are done — no day-to-day studio operation requires Django admin or a shell.
-What's left is convenience and consistency rather than missing power:
-
-| Ticket | Gap |
-|--------|-----|
-| TICKET-008 | No studio-wide pending class request queue (per-teacher drill-down only) |
-| TICKET-009 | A user in both `teacher` and `student` groups only sees one dashboard |
-| TICKET-010 | Some `IsTeacher` endpoints may not check the matching `teacher_can` flag |
+What's left is convenience and consistency rather than missing power. TICKET-008
+(studio-wide request queue) and TICKET-009 (multi-role home) are closed.
 
 Deliberately **not** built: deleting users (deactivate instead, so history survives), editing
 Stripe keys from the UI (they would have to live in the database), and refunding payments

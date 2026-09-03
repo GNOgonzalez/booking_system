@@ -5,6 +5,7 @@ Environment-driven so the same file runs in local dev and production.
 Set values in `.env` (see `.env.example`).
 """
 
+import logging
 import os
 import sys
 from datetime import timedelta
@@ -249,6 +250,9 @@ CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', '')
 # Production hardening (only when DEBUG off)
 if not DEBUG:
     SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', True)
+    # Health probes (Docker HEALTHCHECK, Render) arrive over plain HTTP inside
+    # the container; a 301 to https would read as a failure and restart us.
+    SECURE_REDIRECT_EXEMPT = [r'^healthz/?$', r'^readyz/?$']
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -306,3 +310,64 @@ ZOOM = {
     'CLIENT_SECRET': os.environ.get('ZOOM_CLIENT_SECRET', ''),
     'ENABLED': bool(os.environ.get('ZOOM_CLIENT_ID', '')),
 }
+
+
+# Logging — everything to stdout, which is what Render/Docker collect.
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} {levelname} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': LOG_LEVEL,
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
+        # 500s: log the traceback instead of only mailing ADMINS.
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'scheduling': {'handlers': ['console'], 'level': LOG_LEVEL, 'propagate': False},
+        'progress': {'handlers': ['console'], 'level': LOG_LEVEL, 'propagate': False},
+        'integrations': {'handlers': ['console'], 'level': LOG_LEVEL, 'propagate': False},
+    },
+}
+
+
+# Error tracking — inert unless SENTRY_DSN is set, and never during tests.
+SENTRY_DSN = os.environ.get('SENTRY_DSN', '').strip()
+if SENTRY_DSN and not RUNNING_TESTS:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=os.environ.get('SENTRY_ENVIRONMENT', 'production' if not DEBUG else 'development'),
+            release=os.environ.get('RENDER_GIT_COMMIT', '') or None,
+            traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0')),
+            # Student names, emails, and homework are PII; keep them out of Sentry.
+            send_default_pii=False,
+        )
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            'SENTRY_DSN is set but sentry-sdk is not installed; error tracking is off.'
+        )

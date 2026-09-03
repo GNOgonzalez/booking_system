@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from scheduling.api.permissions import IsStudent, IsTeacherOrStaff
+from scheduling.api.permissions import IsStaff, IsStudent, IsTeacherOrStaff
 from scheduling.api.serializers import (
     ClassOfferingSerializer,
     ClassRequestCreateSerializer,
@@ -19,6 +19,7 @@ from scheduling.services.class_requests import (
     approve_class_request,
     availability_snapshot,
     cancel_pending_request,
+    candidate_teachers_for_request,
     classes_for_teacher_request,
     create_class_request,
     create_open_class_request,
@@ -27,6 +28,7 @@ from scheduling.services.class_requests import (
     open_availability_snapshot,
     open_class_profiles_for_student,
     pending_requests_for_teacher,
+    pending_requests_studio,
     requests_for_student,
     teacher_can_access_request,
     teachers_for_student_requests,
@@ -34,6 +36,7 @@ from scheduling.services.class_requests import (
 )
 from scheduling.services.notifications import notify_class_request_created
 from scheduling.services.scheduling_slots import scheduling_slot_options
+from scheduling.services.teacher_permissions import permission_denied_response, teacher_can
 
 User = get_user_model()
 
@@ -232,6 +235,25 @@ class TeacherClassRequestListView(APIView):
         return Response(ClassRequestSerializer(rows, many=True).data)
 
 
+class StaffClassRequestQueueView(APIView):
+    """Studio-wide pending queue so staff don't have to visit each teacher in turn."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        rows = pending_requests_studio()
+        payload = []
+        for class_request in rows:
+            data = ClassRequestSerializer(class_request).data
+            # Open-pool rows have no teacher yet; staff must pick one to approve.
+            data['candidate_teachers'] = [
+                {'id': teacher.id, 'username': teacher.username}
+                for teacher in candidate_teachers_for_request(class_request)
+            ]
+            payload.append(data)
+        return Response({'requests': payload, 'count': len(payload)})
+
+
 class TeacherClassRequestDetailView(APIView):
     permission_classes = [IsTeacherOrStaff]
 
@@ -287,6 +309,9 @@ class TeacherClassRequestApproveView(APIView):
     permission_classes = [IsTeacherOrStaff]
 
     def post(self, request, pk, teacher_id=None):
+        # Approving creates a Session, so it needs the same capability as POST teacher/sessions/.
+        if not teacher_can(request.user, 'manage_schedule'):
+            return permission_denied_response('manage_schedule')
         teacher = _teacher_from_request(request, teacher_id)
         if teacher is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -306,6 +331,8 @@ class TeacherClassRequestDenyView(APIView):
     permission_classes = [IsTeacherOrStaff]
 
     def post(self, request, pk, teacher_id=None):
+        if not teacher_can(request.user, 'manage_schedule'):
+            return permission_denied_response('manage_schedule')
         teacher = _teacher_from_request(request, teacher_id)
         if teacher is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -322,6 +349,8 @@ class TeacherClassRequestDeleteView(APIView):
     permission_classes = [IsTeacherOrStaff]
 
     def delete(self, request, pk, teacher_id=None):
+        if not teacher_can(request.user, 'manage_schedule'):
+            return permission_denied_response('manage_schedule')
         teacher = _teacher_from_request(request, teacher_id)
         if teacher is None:
             return Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)

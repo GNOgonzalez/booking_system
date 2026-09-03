@@ -17,12 +17,14 @@ export default function StaffTeacherLayout() {
 
   const base = `/staff/teachers/${teacherId}`
   const nav = [
+    ['students', labels('student')],
     ['sessions', labels('session')],
     ['requests', 'Class requests'],
     ['classes', labels('class')],
     ['availability', label('availability')],
     ['progress', labels('report')],
     ['homework', 'Homework'],
+    ['curriculum', 'Curriculum'],
     ['permissions', 'Permissions'],
   ]
 

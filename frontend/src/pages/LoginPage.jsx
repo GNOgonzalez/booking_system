@@ -15,8 +15,8 @@ export default function LoginPage({ onLogin }) {
     setLoading(true)
     try {
       await onLogin(username, password)
-    } catch {
-      setError('Login failed. Check your credentials.')
+    } catch (err) {
+      setError(err.message || 'Sign-in failed.')
     } finally {
       setLoading(false)
     }
@@ -34,11 +34,21 @@ export default function LoginPage({ onLogin }) {
         <form onSubmit={handleSubmit}>
           <div className="field">
             <label>Username</label>
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoFocus
+            />
           </div>
           <div className="field">
             <label>Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
           </div>
           {error && <div className="error">{error}</div>}
           <button type="submit" className="btn-block" disabled={loading}>

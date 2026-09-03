@@ -180,6 +180,32 @@ h2 {
   padding: 0 0.75rem 0.5rem;
 }
 
+.sidebar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.sidebar-collapse-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  margin: 0 0.35rem 0.35rem auto;
+  font-size: 1.35rem;
+  line-height: 1;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.sidebar-collapse-btn:hover {
+  background: var(--blue-50);
+  border-color: transparent;
+  color: var(--blue-700);
+}
+
 .main {
   flex: 1;
   padding: 2.5rem;
@@ -915,6 +941,33 @@ textarea:focus {
   .sidebar-close {
     display: none !important;
   }
+
+  .sidebar-collapse-btn {
+    display: inline-flex;
+  }
+
+  .app-shell.sidebar-collapsed .sidebar {
+    width: 3.25rem;
+    padding: 0.75rem 0.35rem;
+    align-items: center;
+    transition: width 0.18s ease;
+  }
+
+  .app-shell.sidebar-collapsed .sidebar-toolbar {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .app-shell.sidebar-collapsed .sidebar-collapse-btn {
+    margin: 0;
+  }
+
+  .app-shell.sidebar-collapsed .brand,
+  .app-shell.sidebar-collapsed .nav-section,
+  .app-shell.sidebar-collapsed .nav-link,
+  .app-shell.sidebar-collapsed .sidebar-footer {
+    display: none;
+  }
 }
 
 /* ---------- Session calendar ---------- */
@@ -947,6 +1000,59 @@ textarea:focus {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.calendar-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.calendar-view-toggle-btn {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+}
+
+.calendar-view-toggle-btn + .calendar-view-toggle-btn {
+  border-left: 1px solid var(--line);
+}
+
+.calendar-view-toggle-btn.is-active {
+  background: var(--blue-100);
+  color: var(--blue-800);
+}
+
+.calendar-filters {
+  margin-bottom: 0;
+}
+
+.calendar-filters .row {
+  align-items: flex-end;
+}
+
+.calendar-month-list-group + .calendar-month-list-group {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.calendar-month-list-group h2 {
+  font-size: 1rem;
+  margin-bottom: 0.35rem;
+}
+
+.calendar-day-list-students {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .calendar-nav {
@@ -2110,6 +2216,10 @@ a.btn {
   width: 1rem;
   height: 1rem;
   margin: 0;
+}
+
+.curriculum-module--current {
+  border-color: var(--blue-300);
 }
 
 .form-actions {

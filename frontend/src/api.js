@@ -39,30 +39,67 @@ export function saveTokens(access, refresh) {
 }
 
 export async function login(username, password) {
-  const res = await fetch(`${API_BASE}/api/auth/token/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  })
+  const name = (username || '').trim()
+  if (!name || !password) {
+    throw new Error('Enter a username and password.')
+  }
+  let res
+  try {
+    res = await fetch(`${API_BASE}/api/auth/token/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: name, password }),
+    })
+  } catch {
+    throw networkError()
+  }
   if (!res.ok) {
-    throw new Error('Login failed')
+    if (res.status === 429) {
+      throw new Error('Too many sign-in attempts. Wait a minute and try again.')
+    }
+    if (res.status === 401 || res.status === 400) {
+      const detail = await parseResponseError(res)
+      throw new Error(
+        detail && detail !== `Request failed: ${res.status}`
+          ? detail
+          : 'Username or password is incorrect.',
+      )
+    }
+    throw new Error(await parseResponseError(res))
   }
   const data = await res.json()
-  saveTokens(data.access, data.refresh)
+  try {
+    saveTokens(data.access, data.refresh)
+  } catch {
+    throw new Error(
+      'Signed in, but this browser blocked saving the session. Allow storage for this site and try again.',
+    )
+  }
   return data
 }
 
 export async function register({ username, email, password, display_name = '' }) {
-  const res = await fetch(`${API_BASE}/api/auth/register/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, email, password, display_name }),
-  })
+  let res
+  try {
+    res = await fetch(`${API_BASE}/api/auth/register/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password, display_name }),
+    })
+  } catch {
+    throw networkError()
+  }
   if (!res.ok) {
     throw new Error(await parseResponseError(res))
   }
   const data = await res.json()
-  saveTokens(data.access, data.refresh)
+  try {
+    saveTokens(data.access, data.refresh)
+  } catch {
+    throw new Error(
+      'Account created, but this browser blocked saving the session. Allow storage for this site and try again.',
+    )
+  }
   return data
 }
 

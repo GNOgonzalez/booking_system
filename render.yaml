@@ -6,10 +6,20 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /api/branding/
+    # Liveness only. /readyz also checks the database — do not use it here, or a
+    # paused Supabase Free project would make Render restart the service.
+    healthCheckPath: /healthz
     envVars:
       - key: DEBUG
         value: "False"
+      # Free tier is 512 MB RAM; 2 workers x 4 threads fits with headroom.
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: LOG_LEVEL
+        value: "INFO"
+      # Optional error tracking — leave unset to keep Sentry inert.
+      - key: SENTRY_DSN
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: ALLOWED_HOSTS

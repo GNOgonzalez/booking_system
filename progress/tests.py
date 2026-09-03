@@ -10,7 +10,12 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from progress.homework_services import create_homework_assignment
+from progress.models import ProgressReport
 from scheduling.models import Booking, ClassOffering, ClassTopic, Session
+from scheduling.services.teacher_permissions import (
+    ensure_default_permissions,
+    set_teacher_permissions,
+)
 
 TEMP_MEDIA = tempfile.mkdtemp(prefix='booking_test_media_')
 
@@ -214,3 +219,52 @@ class SessionHistoryPrivacyTests(TestCase):
         )
         self.assertEqual(res.status_code, 200)
         self.assertIn(self.session_a.id, self._session_ids_from_history(res.json()))
+
+
+class TeacherWriteReportsPermissionTests(TestCase):
+    """Every teacher write gated by `write_reports` must honour the staff-set flag."""
+
+    def setUp(self):
+        Group.objects.create(name='student')
+        Group.objects.create(name='teacher')
+        self.teacher = User.objects.create_user('perm_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('perm_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        ensure_default_permissions(self.teacher)
+
+    def _token(self, user):
+        return self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+
+    def _post_progress_report(self):
+        return self.client.post(
+            '/api/progress/teacher/',
+            {'student': self.student.id, 'rating': 4, 'note': 'Good progress.'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(self.teacher)}',
+        )
+
+    def test_progress_report_allowed_with_permission(self):
+        res = self._post_progress_report()
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(ProgressReport.objects.filter(teacher=self.teacher).count(), 1)
+
+    def test_progress_report_denied_without_permission(self):
+        set_teacher_permissions(self.teacher, {'write_reports': False})
+        res = self._post_progress_report()
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(ProgressReport.objects.filter(teacher=self.teacher).exists())
+
+    def test_session_feedback_denied_without_permission(self):
+        set_teacher_permissions(self.teacher, {'write_reports': False})
+        res = self.client.post(
+            '/api/progress/feedback/teacher/',
+            {'student': self.student.id, 'summary': 'Nice work.'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(self.teacher)}',
+        )
+        self.assertEqual(res.status_code, 403)
