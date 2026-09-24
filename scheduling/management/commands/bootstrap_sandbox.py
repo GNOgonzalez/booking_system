@@ -18,8 +18,10 @@ from scheduling.models import (
     MembershipPlan,
     Message,
     Session,
+    StudentCurriculum,
     TeacherStudentAssignment,
 )
+from scheduling.services.cefr_seed import seed_cefr_english_track
 from scheduling.services.class_catalog import ensure_default_catalog
 from scheduling.services.curriculum import create_track, enroll_student
 from scheduling.services.glossary import ensure_default_glossary
@@ -573,6 +575,13 @@ class Command(BaseCommand):
             )
         if track is not None:
             enroll_student(student, track)
+
+        cefr_track, _ = seed_cefr_english_track(created_by=staff_user)
+        if cefr_track is not None and not StudentCurriculum.objects.filter(
+            student=student_2,
+            is_active=True,
+        ).exists():
+            enroll_student(student_2, cefr_track)
 
         if not Message.objects.filter(subject='Welcome').exists():
             Message.objects.create(

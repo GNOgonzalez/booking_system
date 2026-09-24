@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../api.js'
+import CurriculumAdaptivePanel from '../components/CurriculumAdaptivePanel.jsx'
 import { useTeacherPermissions } from '../hooks/useTeacherPermissions.js'
 import { useTeacherScope } from '../hooks/useTeacherScope.js'
 
@@ -15,6 +17,8 @@ export default function TeacherCurriculumPage() {
   const { isStaff, paths } = useTeacherScope()
   const { can } = useTeacherPermissions()
   const canEdit = isStaff || can('manage_curriculum')
+  const [searchParams] = useSearchParams()
+  const requestedStudentId = Number(searchParams.get('student')) || null
   const [students, setStudents] = useState([])
   const [templates, setTemplates] = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -39,6 +43,9 @@ export default function TeacherCurriculumPage() {
         setTemplates(templateRows)
         setSelectedId((current) => {
           if (current && studentRows.some((row) => row.id === current)) return current
+          if (requestedStudentId && studentRows.some((row) => row.id === requestedStudentId)) {
+            return requestedStudentId
+          }
           return studentRows[0]?.id || null
         })
       })
@@ -49,6 +56,12 @@ export default function TeacherCurriculumPage() {
 
   const selected = students.find((row) => row.id === selectedId) || null
   const enrollment = selected?.enrollment
+
+  const replaceEnrollment = (studentId, nextEnrollment) => {
+    setStudents((rows) => rows.map((row) => (
+      row.id === studentId ? { ...row, enrollment: nextEnrollment } : row
+    )))
+  }
 
   const setProgress = async (moduleId, status) => {
     if (!selected) return
@@ -242,7 +255,10 @@ export default function TeacherCurriculumPage() {
           {selected.assigned && <div className="card-meta">Staff assigned</div>}
           {enrollment ? (
             <>
-              <h3>{enrollment.track.title}</h3>
+              <h3>
+                {enrollment.track.title}
+                {enrollment.track.framework === 'cefr' && <> <span className="badge">CEFR</span></>}
+              </h3>
               {enrollment.track.description && <p className="card-meta">{enrollment.track.description}</p>}
               {enrollment.track.modules.map((module) => (
                 <div
@@ -251,8 +267,15 @@ export default function TeacherCurriculumPage() {
                 >
                   <div className="card-row">
                     <div>
-                      <div className="card-title">{module.title}</div>
-                      <div className="card-meta">{statusLabel(module.status)}{module.is_current ? ' · Current' : ''}</div>
+                      <div className="card-title">
+                        {module.cefr_level && <><span className="badge">{module.cefr_level}</span> </>}
+                        {module.title}
+                      </div>
+                      <div className="card-meta">
+                        {statusLabel(module.status)}
+                        {module.is_current ? ' · Current' : ''}
+                        {module.skill_keys?.length ? ` · ${module.skill_keys.join(', ')}` : ''}
+                      </div>
                       {module.content && <p>{module.content}</p>}
                     </div>
                     {canEdit && (
@@ -299,6 +322,15 @@ export default function TeacherCurriculumPage() {
             </div>
           )}
         </div>
+      )}
+
+      {selected && enrollment && (
+        <CurriculumAdaptivePanel
+          studentId={selected.id}
+          paths={paths}
+          canEdit={canEdit}
+          onEnrollmentChange={(next) => replaceEnrollment(selected.id, next)}
+        />
       )}
     </div>
   )

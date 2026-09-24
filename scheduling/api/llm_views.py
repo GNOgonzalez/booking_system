@@ -34,6 +34,7 @@ class StaffLLMConfigView(APIView):
             model_name=data.get('model_name'),
             is_enabled=data.get('is_enabled'),
             max_tokens=data.get('max_tokens'),
+            adaptive_curriculum_enabled=data.get('adaptive_curriculum_enabled'),
         )
         if error:
             return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)

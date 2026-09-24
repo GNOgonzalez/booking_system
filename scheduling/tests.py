@@ -3507,3 +3507,749 @@ class TeacherStudentCurriculumTests(TestCase):
         )
         self.assertEqual(res.status_code, 403)
 
+
+
+class SpecialMembershipTests(TestCase):
+    """Private plans belong to one student and stay out of the store."""
+
+    def setUp(self):
+        Group.objects.create(name='staff')
+        Group.objects.create(name='student')
+        self.staff = User.objects.create_user('special_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.student = User.objects.create_user('special_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.other_student = User.objects.create_user('special_student_2', password='pass')
+        self.other_student.groups.add(Group.objects.get(name='student'))
+        self.catalog_plan = MembershipPlan.objects.create(
+            name='Japanese',
+            price_cents=5000,
+            ticket_allowance=8,
+            billing_period_days=30,
+        )
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_unknown_class_id_is_rejected_without_leaving_a_plan(self):
+        res = self._create_special(allowed_class_ids=[999999])
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(MembershipPlan.objects.filter(is_public=False).exists())
+
+    def _create_special(self, student=None, **overrides):
+        payload = {
+            'name': 'Saturday intensive',
+            'ticket_allowance': 6,
+            'billing_period_days': 60,
+            'price_cents': 12000,
+            'amount_cents': 12000,
+        }
+        payload.update(overrides)
+        return self.client.post(
+            f'/api/staff/students/{(student or self.student).id}/membership/special/',
+            payload,
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+
+    def test_staff_creates_and_grants_a_special_membership(self):
+        res = self._create_special()
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertEqual(data['tickets_remaining'], 6)
+
+        plan = MembershipPlan.objects.get(name='Saturday intensive')
+        self.assertFalse(plan.is_public)
+        self.assertEqual(plan.for_user, self.student)
+        self.assertTrue(Membership.objects.filter(user=self.student, plan=plan).exists())
+
+        payment = Payment.objects.get(user=self.student)
+        self.assertEqual(payment.provider, Payment.PROVIDER_STAFF)
+        self.assertEqual(payment.amount_cents, 12000)
+
+    def test_special_plan_is_not_in_the_student_store(self):
+        self._create_special()
+        res = self.client.get('/api/membership/plans/', **self._auth(self.student))
+        self.assertEqual(res.status_code, 200)
+        names = [row['name'] for row in res.json()]
+        self.assertIn('Japanese', names)
+        self.assertNotIn('Saturday intensive', names)
+
+    def test_student_cannot_purchase_someone_elses_special_plan(self):
+        self._create_special()
+        plan = MembershipPlan.objects.get(name='Saturday intensive')
+        res = self.client.post(
+            '/api/membership/',
+            {'plan_id': plan.id, 'months': 1},
+            content_type='application/json',
+            **self._auth(self.other_student),
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_special_plan_cannot_be_granted_to_another_student(self):
+        self._create_special()
+        plan = MembershipPlan.objects.get(name='Saturday intensive')
+        res = self.client.post(
+            f'/api/staff/students/{self.other_student.id}/membership/',
+            {'plan_id': plan.id, 'months': 1},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(Membership.objects.filter(user=self.other_student).exists())
+
+    def test_unnamed_special_plan_is_rejected(self):
+        res = self._create_special(name='   ')
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(MembershipPlan.objects.filter(is_public=False).exists())
+
+    def test_catalog_grant_still_works(self):
+        res = self.client.post(
+            f'/api/staff/students/{self.student.id}/membership/',
+            {'plan_id': self.catalog_plan.id, 'months': 1},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()['tickets_remaining'], 8)
+
+    def test_plan_catalog_separates_public_and_private(self):
+        self._create_special()
+        public = self.client.get('/api/staff/membership-plans/', **self._auth(self.staff))
+        private = self.client.get('/api/staff/membership-plans/?private=1', **self._auth(self.staff))
+        self.assertNotIn('Saturday intensive', [row['name'] for row in public.json()])
+        self.assertEqual([row['name'] for row in private.json()], ['Saturday intensive'])
+        self.assertEqual(private.json()[0]['for_user_name'], 'special_student')
+
+    def _store_names(self, user):
+        res = self.client.get('/api/membership/plans/', **self._auth(user))
+        return [row['name'] for row in res.json()]
+
+    def _buy(self, user, plan):
+        return self.client.post(
+            '/api/membership/',
+            {'plan_id': plan.id, 'months': 1},
+            content_type='application/json',
+            **self._auth(user),
+        )
+
+    def test_owner_cannot_renew_by_default(self):
+        self._create_special()
+        plan = MembershipPlan.objects.get(name='Saturday intensive')
+        self.assertFalse(plan.student_can_renew)
+        self.assertEqual(self._buy(self.student, plan).status_code, 400)
+
+    def test_renewable_special_plan_is_for_the_owner_only(self):
+        res = self._create_special(student_can_renew=True)
+        self.assertEqual(res.status_code, 201)
+        plan = MembershipPlan.objects.get(name='Saturday intensive')
+        self.assertTrue(plan.student_can_renew)
+
+        self.assertIn('Saturday intensive', self._store_names(self.student))
+        self.assertNotIn('Saturday intensive', self._store_names(self.other_student))
+
+        renewed = self._buy(self.student, plan)
+        self.assertEqual(renewed.status_code, 201)
+        self.assertEqual(Membership.objects.filter(user=self.student, plan=plan).count(), 1)
+        self.assertEqual(self._buy(self.other_student, plan).status_code, 400)
+
+    def test_staff_can_toggle_renewal_later(self):
+        self._create_special()
+        plan = MembershipPlan.objects.get(name='Saturday intensive')
+        res = self.client.patch(
+            f'/api/staff/membership-plans/{plan.id}/',
+            {'student_can_renew': True},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()['student_can_renew'])
+        plan.refresh_from_db()
+        self.assertFalse(plan.is_public)
+        self.assertEqual(self._buy(self.student, plan).status_code, 201)
+
+    def test_inactive_renewable_plan_is_hidden(self):
+        self._create_special(student_can_renew=True)
+        MembershipPlan.objects.filter(name='Saturday intensive').update(is_active=False)
+        self.assertNotIn('Saturday intensive', self._store_names(self.student))
+
+
+class AdaptiveCurriculumTests(TestCase):
+    def setUp(self):
+        from progress.services import ensure_default_score_dimensions
+        from scheduling.services.curriculum import create_track, enroll_student
+        from scheduling.services.roster import set_student_teachers
+        from scheduling.services.teacher_permissions import ensure_default_permissions
+
+        for name in ('student', 'teacher', 'staff'):
+            Group.objects.get_or_create(name=name)
+        self.teacher = User.objects.create_user('adapt_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.other_teacher = User.objects.create_user('adapt_other', password='pass')
+        self.other_teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('adapt_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.staff = User.objects.create_user('adapt_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        ensure_default_permissions(self.teacher)
+        ensure_default_permissions(self.other_teacher)
+        ensure_default_score_dimensions()
+        set_student_teachers(self.student, [self.teacher.id], staff_user=self.staff)
+
+        self.track, _ = create_track(
+            title='Adaptive test path',
+            is_template=True,
+            framework='cefr',
+            subject='English',
+            modules=[
+                {'title': 'Introductions', 'cefr_level': 'A1', 'skill_keys': ['speaking']},
+                {'title': 'Present simple', 'cefr_level': 'A1', 'skill_keys': ['grammar'],
+                 'content': 'Drill he/she/it -s.'},
+                {'title': 'Short texts', 'cefr_level': 'A2', 'skill_keys': ['reading']},
+            ],
+        )
+        self.m_intro, self.m_grammar, self.m_reading = list(self.track.modules.all())
+        enroll_student(self.student, self.track)
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _feedback(self, grammar, other=5, notes=''):
+        from progress.models import SessionFeedback
+
+        return SessionFeedback.objects.create(
+            student=self.student,
+            teacher=self.teacher,
+            scores={'grammar': grammar, 'reading': other, 'writing': other, 'speaking': other},
+            class_notes=notes,
+        )
+
+    def _enable_llm(self):
+        from scheduling.models import StudioLLMConfig
+
+        config = StudioLLMConfig.load()
+        config.is_enabled = True
+        config.api_key = 'test-key'
+        config.adaptive_curriculum_enabled = True
+        config.save()
+
+    def test_signals_average_scores_and_flag_weak_grammar(self):
+        from scheduling.services.adaptive_curriculum import student_learning_signals
+
+        self._feedback(1, notes='Struggled with third person -s.')
+        self._feedback(2)
+        signals = student_learning_signals(self.student, teacher=self.teacher)
+        self.assertEqual(signals['report_count'], 2)
+        self.assertEqual(signals['weak_keys'], ['grammar'])
+        grammar = next(row for row in signals['dimensions'] if row['key'] == 'grammar')
+        self.assertEqual(grammar['average'], 1.5)
+        self.assertEqual(signals['current_module']['id'], self.m_intro.id)
+        self.assertIn('third person', signals['recent_notes'][0]['excerpt'])
+
+    def test_low_grammar_suggests_matching_module_and_next_step(self):
+        from scheduling.models import CurriculumSuggestion
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        feedback = self._feedback(1)
+        created, info = generate_suggestions(self.student, teacher=self.teacher)
+        by_kind = {row.kind: row for row in created}
+        self.assertEqual(by_kind['supplementary'].target_module_id, self.m_grammar.id)
+        self.assertEqual(by_kind['next_module'].target_module_id, self.m_intro.id)
+        self.assertEqual(by_kind['supplementary'].feedback_id, feedback.id)
+        self.assertTrue(all(row.status == CurriculumSuggestion.STATUS_PENDING for row in created))
+        self.assertFalse(info['used_llm'])
+
+        again, _ = generate_suggestions(self.student, teacher=self.teacher)
+        self.assertEqual(again, [])
+
+    def test_accept_next_module_advances_track(self):
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        self._feedback(5)
+        created, _ = generate_suggestions(self.student, teacher=self.teacher)
+        suggestion = next(row for row in created if row.kind == 'next_module')
+        res = self.client.post(
+            f'/api/teacher/curriculum/suggestions/{suggestion.id}/accept/',
+            {},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 200)
+        modules = res.json()['enrollment']['track']['modules']
+        self.assertEqual(modules[0]['status'], 'completed')
+        self.assertTrue(modules[1]['is_current'])
+        self.assertEqual(res.json()['suggestion']['status'], 'accepted')
+
+        repeat = self.client.post(
+            f'/api/teacher/curriculum/suggestions/{suggestion.id}/accept/',
+            {},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(repeat.status_code, 400)
+
+    def test_accept_supplementary_shows_on_student_curriculum(self):
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        self._feedback(1)
+        created, _ = generate_suggestions(self.student, teacher=self.teacher)
+        suggestion = next(row for row in created if row.kind == 'supplementary')
+        res = self.client.post(
+            f'/api/teacher/curriculum/suggestions/{suggestion.id}/accept/',
+            {},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 200)
+        extras = self.client.get('/api/curriculum/me/supplementary/', **self._auth(self.student)).json()
+        self.assertEqual(len(extras), 1)
+        self.assertEqual(extras[0]['content'], 'Drill he/she/it -s.')
+        self.assertEqual(extras[0]['module']['cefr_level'], 'A1')
+
+    def test_dismiss_leaves_track_unchanged(self):
+        from scheduling.models import StudentModuleProgress, StudentSupplementaryMaterial
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        self._feedback(1)
+        created, _ = generate_suggestions(self.student, teacher=self.teacher)
+        for suggestion in created:
+            res = self.client.post(
+                f'/api/teacher/curriculum/suggestions/{suggestion.id}/dismiss/',
+                {},
+                content_type='application/json',
+                **self._auth(self.teacher),
+            )
+            self.assertEqual(res.status_code, 200)
+        self.assertFalse(StudentModuleProgress.objects.filter(student=self.student).exists())
+        self.assertFalse(StudentSupplementaryMaterial.objects.filter(student=self.student).exists())
+        listing = self.client.get(
+            f'/api/teacher/curriculum/students/{self.student.id}/suggestions/',
+            **self._auth(self.teacher),
+        ).json()
+        self.assertEqual(listing['pending'], [])
+        self.assertEqual({row['status'] for row in listing['recent']}, {'dismissed'})
+
+    def test_student_and_unassigned_teacher_cannot_act(self):
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        self._feedback(1)
+        created, _ = generate_suggestions(self.student, teacher=self.teacher)
+        url = f'/api/teacher/curriculum/suggestions/{created[0].id}/accept/'
+        as_student = self.client.post(url, {}, content_type='application/json', **self._auth(self.student))
+        self.assertEqual(as_student.status_code, 403)
+        as_other = self.client.post(url, {}, content_type='application/json', **self._auth(self.other_teacher))
+        self.assertEqual(as_other.status_code, 403)
+        suggest = self.client.post(
+            f'/api/teacher/curriculum/students/{self.student.id}/suggest/',
+            {},
+            content_type='application/json',
+            **self._auth(self.other_teacher),
+        )
+        self.assertEqual(suggest.status_code, 403)
+
+    def test_suggest_requires_manage_curriculum(self):
+        from scheduling.services.teacher_permissions import set_teacher_permissions
+
+        set_teacher_permissions(self.teacher, {'manage_curriculum': False})
+        res = self.client.post(
+            f'/api/teacher/curriculum/students/{self.student.id}/suggest/',
+            {},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        view = self.client.get(
+            f'/api/teacher/curriculum/students/{self.student.id}/suggestions/',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(view.status_code, 200)
+
+    def test_staff_mirror_generates_for_teacher(self):
+        self._feedback(1)
+        res = self.client.post(
+            f'/api/staff/teachers/{self.teacher.id}/curriculum/students/{self.student.id}/suggest/',
+            {},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(res.json()['created'])
+
+    def test_llm_suggestions_merge_and_drop_unknown_modules(self):
+        import json
+
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        self._enable_llm()
+        self._feedback(1, notes='Mixes up he go / he goes.')
+        reply = json.dumps({'suggestions': [
+            {'kind': 'supplementary', 'title': 'Third-person -s drills',
+             'rationale': 'Notes show he go / he goes.', 'target_module_id': self.m_grammar.id},
+            {'kind': 'review', 'title': 'Invented module', 'target_module_id': 999999},
+        ]})
+        with patch('scheduling.services.llm.chat_completion', return_value=f'Here you go:\n{reply}') as mocked:
+            created, info = generate_suggestions(self.student, teacher=self.teacher)
+        mocked.assert_called_once()
+        self.assertTrue(info['used_llm'])
+        titles = [row.title for row in created]
+        self.assertIn('Third-person -s drills', titles)
+        self.assertNotIn('Invented module', titles)
+        supplementary = [row for row in created if row.kind == 'supplementary']
+        self.assertEqual(len(supplementary), 1)
+        self.assertEqual(supplementary[0].source, 'llm')
+
+    def test_llm_failure_falls_back_to_rules(self):
+        from integrations.llm.errors import LLMError
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+
+        self._enable_llm()
+        self._feedback(1)
+        with patch('scheduling.services.llm.chat_completion', side_effect=LLMError('timeout')):
+            created, info = generate_suggestions(self.student, teacher=self.teacher)
+        self.assertTrue(created)
+        self.assertTrue(all(row.source == 'rules' for row in created))
+        self.assertIn('timeout', info['llm_error'])
+
+    def test_llm_skipped_without_use_ai(self):
+        from scheduling.services.adaptive_curriculum import generate_suggestions
+        from scheduling.services.teacher_permissions import set_teacher_permissions
+
+        self._enable_llm()
+        set_teacher_permissions(self.teacher, {'use_ai': False})
+        self._feedback(1)
+        with patch('scheduling.services.llm.chat_completion') as mocked:
+            created, _ = generate_suggestions(self.student, teacher=self.teacher)
+        mocked.assert_not_called()
+        self.assertTrue(created)
+
+    def test_summary_reports_band_and_activity(self):
+        from scheduling.services.curriculum import complete_module
+
+        complete_module(self.student, self.m_intro, actor=self.teacher)
+        complete_module(self.student, self.m_grammar, actor=self.teacher)
+        self._feedback(4)
+        res = self.client.get(
+            f'/api/teacher/curriculum/students/{self.student.id}/summary/?days=7',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['days'], 7)
+        self.assertEqual(len(body['modules_completed']), 2)
+        self.assertEqual(body['estimated_cefr_band'], 'A2')
+        self.assertEqual(body['report_count'], 1)
+
+    def test_signals_skip_reports_hidden_from_peers(self):
+        from progress.models import SessionFeedback, SessionHistoryPrivacy
+        from scheduling.services.adaptive_curriculum import student_learning_signals
+
+        now = timezone.now()
+        session = Session.objects.create(
+            teacher=self.other_teacher,
+            title='Private lesson',
+            start_time=now - timedelta(hours=2),
+            end_time=now - timedelta(hours=1),
+        )
+        SessionHistoryPrivacy.objects.create(session=session, hidden_by_student=True)
+        SessionFeedback.objects.create(
+            student=self.student,
+            teacher=self.other_teacher,
+            session=session,
+            scores={'grammar': 1},
+            class_notes='Private note',
+        )
+        self._feedback(5, notes='Shared note')
+
+        mine = student_learning_signals(self.student, teacher=self.teacher)
+        self.assertEqual(mine['report_count'], 1)
+        self.assertEqual([n['excerpt'] for n in mine['recent_notes']], ['Shared note'])
+
+        theirs = student_learning_signals(self.student, teacher=self.other_teacher)
+        self.assertEqual(theirs['report_count'], 2)
+
+    def test_llm_config_toggle_round_trips(self):
+        res = self.client.patch(
+            '/api/staff/llm/',
+            {'adaptive_curriculum_enabled': True},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()['adaptive_curriculum_enabled'])
+
+
+class CefrSeedTests(TestCase):
+    def test_seed_is_idempotent_and_tagged(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from scheduling.models import CurriculumTrack
+
+        call_command('seed_cefr_curriculum', stdout=StringIO())
+        call_command('seed_cefr_curriculum', stdout=StringIO())
+        tracks = CurriculumTrack.objects.filter(framework=CurriculumTrack.FRAMEWORK_CEFR)
+        self.assertEqual(tracks.count(), 1)
+        track = tracks.get()
+        self.assertTrue(track.is_template)
+        levels = list(track.modules.values_list('cefr_level', flat=True))
+        self.assertEqual(levels[0], 'A1')
+        self.assertEqual(levels[-1], 'C2')
+        self.assertTrue(all(module.skill_keys for module in track.modules.all()))
+
+
+class BranchOpenHoursTests(TestCase):
+    """Branches publish opening hours; classes must fit inside; walk-ins book until the end."""
+
+    def setUp(self):
+        from scheduling.services.branches import save_branch
+        from scheduling.services.teacher_permissions import ensure_default_permissions
+
+        for name in ('student', 'teacher', 'staff'):
+            Group.objects.get_or_create(name=name)
+        self.staff = User.objects.create_user('br_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        self.teacher = User.objects.create_user('br_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        ensure_default_permissions(self.teacher)
+        self.student = User.objects.create_user('br_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.student_2 = User.objects.create_user('br_student_2', password='pass')
+        self.student_2.groups.add(Group.objects.get(name='student'))
+        self.plan = MembershipPlan.objects.create(name='Branch pass', price_cents=1000, ticket_allowance=10)
+        for student in (self.student, self.student_2):
+            Membership.objects.create(user=student, plan=self.plan, is_active=True, tickets_remaining=5)
+        self.offering = ClassOffering.objects.create(
+            teacher=self.teacher, subject='English', level='B1', focus='Conversation', default_capacity=1,
+        )
+        # Open 12:00-20:00 every day so the test does not depend on the weekday it runs.
+        self.branch, err = save_branch(
+            name='Main',
+            hours=[{'weekday': d, 'start_time': '12:00', 'end_time': '20:00'} for d in range(7)],
+        )
+        self.assertIsNone(err)
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def _at(self, hour, *, days=1, minute=0):
+        """Aware datetime at studio-local `hour` on today + days."""
+        from scheduling.services.branches import studio_tz
+
+        local_now = timezone.now().astimezone(studio_tz())
+        return (local_now + timedelta(days=days)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    def _open_all_hours(self):
+        """Walk-in tests use real 'now', so make the branch open around the clock."""
+        from scheduling.services.branches import save_branch
+
+        self.branch, err = save_branch(
+            branch=self.branch,
+            hours=[{'weekday': d, 'start_time': '00:00', 'end_time': '23:59'} for d in range(7)],
+        )
+        self.assertIsNone(err)
+
+    def _place(self, start, end, **extra):
+        from scheduling.services.branches import place_branch_class
+
+        return place_branch_class(
+            branch=self.branch,
+            teacher=self.teacher,
+            class_offering=self.offering,
+            start_time=start,
+            end_time=end,
+            **extra,
+        )
+
+    def test_hours_save_and_reject_bad_windows(self):
+        from scheduling.services.branches import save_branch
+
+        branch, err = save_branch(
+            branch=self.branch,
+            hours=[
+                {'weekday': 0, 'start_time': '12:00', 'end_time': '20:00'},
+                {'weekday': 5, 'start_time': '10:00', 'end_time': '14:00'},
+            ],
+        )
+        self.assertIsNone(err)
+        self.assertEqual([(h.weekday, h.start_time.hour) for h in branch.hours.all()], [(0, 12), (5, 10)])
+
+        _, err = save_branch(branch=self.branch, hours=[{'weekday': 0, 'start_time': '20:00', 'end_time': '12:00'}])
+        self.assertIn('closing time', err)
+        _, err = save_branch(
+            branch=self.branch,
+            hours=[
+                {'weekday': 0, 'start_time': '12:00', 'end_time': '15:00'},
+                {'weekday': 0, 'start_time': '14:00', 'end_time': '18:00'},
+            ],
+        )
+        self.assertIn('overlap', err)
+        # Failed save leaves the previous hours untouched.
+        self.assertEqual(self.branch.hours.count(), 2)
+
+    def test_staff_api_creates_branch_with_hours(self):
+        res = self.client.post(
+            '/api/staff/branches/',
+            {'name': 'Downtown', 'hours': [{'weekday': 1, 'start_time': '12:00', 'end_time': '20:00'}]},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()['hours'][0]['weekday_label'], 'Tuesday')
+        forbidden = self.client.get('/api/staff/branches/', **self._auth(self.teacher))
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_class_outside_hours_is_rejected(self):
+        from scheduling.services.branches import OUTSIDE_BRANCH_HOURS_DETAIL
+
+        _, err = self._place(self._at(9), self._at(10))
+        self.assertEqual(err, OUTSIDE_BRANCH_HOURS_DETAIL)
+        _, err = self._place(self._at(19), self._at(21))
+        self.assertEqual(err, OUTSIDE_BRANCH_HOURS_DETAIL)
+        session, err = self._place(self._at(12), self._at(13))
+        self.assertIsNone(err)
+        self.assertEqual(session.branch_id, self.branch.id)
+        self.assertEqual(session.capacity, 1)
+
+    def test_teacher_cannot_double_book_themselves(self):
+        from scheduling.services.branches import TEACHER_BUSY_DETAIL
+
+        _, err = self._place(self._at(13), self._at(14))
+        self.assertIsNone(err)
+        _, err = self._place(self._at(13, minute=30), self._at(14, minute=30))
+        self.assertEqual(err, TEACHER_BUSY_DETAIL)
+
+    def test_open_windows_shrink_as_classes_are_placed(self):
+        from scheduling.services.branches import open_windows
+
+        day = self._at(12).date()
+        self.assertEqual(len(open_windows(self.branch, day)), 1)
+        self._place(self._at(14), self._at(15))
+        windows = open_windows(self.branch, day)
+        self.assertEqual([(w['start'].hour, w['end'].hour) for w in windows], [(12, 14), (15, 20)])
+
+    def test_teacher_places_class_via_api_with_walk_ins(self):
+        payload = {
+            'class_offering': self.offering.id,
+            'start_time': self._at(15).isoformat(),
+            'end_time': self._at(16).isoformat(),
+            'accepts_walk_ins': True,
+            'capacity': 3,
+        }
+        res = self.client.post(
+            f'/api/teacher/branches/{self.branch.id}/classes/',
+            payload,
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 201, res.content)
+        body = res.json()
+        self.assertTrue(body['accepts_walk_ins'])
+        self.assertEqual(body['branch_name'], 'Main')
+        self.assertEqual(body['capacity'], 3)
+
+        student_try = self.client.post(
+            f'/api/teacher/branches/{self.branch.id}/classes/',
+            payload,
+            content_type='application/json',
+            **self._auth(self.student),
+        )
+        self.assertEqual(student_try.status_code, 403)
+
+    def test_staff_places_class_for_teacher(self):
+        res = self.client.post(
+            f'/api/staff/branches/{self.branch.id}/classes/',
+            {
+                'teacher': self.teacher.id,
+                'class_offering': self.offering.id,
+                'start_time': self._at(16).isoformat(),
+                'end_time': self._at(17).isoformat(),
+            },
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(res.json()['teacher'], self.teacher.id)
+
+    def test_today_list_only_shows_placed_classes(self):
+        # Hours exist all day, but nothing is placed yet — students see no windows.
+        today = self._at(12, days=0).date().isoformat()
+        empty = self.client.get(f'/api/sessions/today/?date={today}', **self._auth(self.student)).json()
+        self.assertEqual(empty['branches'][0]['classes'], [])
+        self.assertNotIn('open_windows', empty['branches'][0])
+
+        self._place(self._at(18, days=0), self._at(19, days=0))
+        listed = self.client.get(f'/api/sessions/today/?date={today}', **self._auth(self.student)).json()
+        # It shows only if 18:00 today is still in the future when the test runs.
+        expect = 1 if self._at(18, days=0) > timezone.now() else 0
+        self.assertEqual(len(listed['branches'][0]['classes']), expect)
+
+    def test_walk_in_books_after_start_and_spends_ticket(self):
+        self._open_all_hours()
+        now = timezone.now()
+        session, err = self._place(now - timedelta(minutes=20), now + timedelta(minutes=40), accepts_walk_ins=True)
+        self.assertIsNone(err, err)
+        self.assertIsNone(booking_block_reason(self.student, session))
+        result = create_booking(self.student, session)
+        self.assertTrue(result)
+        membership = Membership.objects.get(user=self.student)
+        self.assertEqual(membership.tickets_remaining, 4)
+        self.assertEqual(session.bookings.filter(status='confirmed').count(), 1)
+
+    def test_non_walk_in_still_closes_at_start(self):
+        self._open_all_hours()
+        now = timezone.now()
+        session, err = self._place(now - timedelta(minutes=20), now + timedelta(minutes=40))
+        self.assertIsNone(err, err)
+        self.assertEqual(booking_block_reason(self.student, session), 'This session has already started.')
+        self.assertFalse(create_booking(self.student, session))
+
+    def test_walk_in_closes_at_end_and_respects_capacity(self):
+        self._open_all_hours()
+        now = timezone.now()
+        finished, err = self._place(now - timedelta(hours=2), now - timedelta(hours=1), accepts_walk_ins=True)
+        self.assertIsNone(err, err)
+        self.assertEqual(booking_block_reason(self.student, finished), 'This class has already finished.')
+
+        live, err = self._place(now - timedelta(minutes=10), now + timedelta(minutes=50), accepts_walk_ins=True)
+        self.assertIsNone(err, err)
+        self.assertTrue(create_booking(self.student, live))
+        self.assertEqual(booking_block_reason(self.student_2, live), 'This session is full.')
+
+    def test_walk_in_toggle_is_owner_or_staff_only(self):
+        session, _ = self._place(self._at(17), self._at(18))
+        other = User.objects.create_user('br_other_teacher', password='pass')
+        other.groups.add(Group.objects.get(name='teacher'))
+        url = f'/api/teacher/sessions/{session.id}/walk-ins/'
+        denied = self.client.post(url, {'accepts_walk_ins': True}, content_type='application/json', **self._auth(other))
+        self.assertEqual(denied.status_code, 404)
+        ok = self.client.post(url, {'accepts_walk_ins': True}, content_type='application/json', **self._auth(self.staff))
+        self.assertEqual(ok.status_code, 200)
+        self.assertTrue(ok.json()['accepts_walk_ins'])
+
+    def test_private_session_cannot_take_walk_ins(self):
+        private = Session.objects.create(
+            teacher=self.teacher, title='1:1', start_time=self._at(13), end_time=self._at(14), capacity=1, status='open',
+        )
+        res = self.client.post(
+            f'/api/teacher/sessions/{private.id}/walk-ins/',
+            {'accepts_walk_ins': True},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 400)

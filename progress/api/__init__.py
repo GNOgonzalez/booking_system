@@ -34,12 +34,14 @@ from progress.api.score_dimensions import (
     StaffScoreSubjectsView,
 )
 from progress.api.staff import (
+    StaffFeedbackListView,
     StaffTeacherFeedbackDetailView,
     StaffTeacherFeedbackListCreateView,
     StaffTeacherHomeworkDetailView,
     StaffTeacherHomeworkEntryCreateView,
     StaffTeacherHomeworkListCreateView,
 )
+from progress.api.teacher_home import StaffTeacherHomeView, TeacherHomeView
 
 __all__ = [
     'StaffScoreDimensionListCreateView',
@@ -47,8 +49,11 @@ __all__ = [
     'StaffScoreSubjectsView',
     'StaffScoreDimensionReorderView',
     'StaffScoreDimensionMetaView',
+    'StaffFeedbackListView',
     'StaffTeacherFeedbackListCreateView',
     'StaffTeacherFeedbackDetailView',
+    'TeacherHomeView',
+    'StaffTeacherHomeView',
     'ScoreDimensionListView',
     'MyProgressListView',
     'MySessionFeedbackListView',

@@ -141,7 +141,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+# Studio-local zone: branch opening hours are read in this zone. Teachers keep their own
+# profile timezone for personal availability.
+TIME_ZONE = os.environ.get('TIME_ZONE', 'UTC').strip() or 'UTC'
 USE_I18N = True
 USE_TZ = True
 

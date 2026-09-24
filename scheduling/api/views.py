@@ -35,7 +35,6 @@ from scheduling.models import (
     Booking,
     ClassOffering,
     CurriculumItem,
-    MembershipPlan,
     Message,
     Profile,
     Session,
@@ -56,6 +55,7 @@ from scheduling.services.membership import (
 from scheduling.services.payments import (
     get_available_plans,
     get_payment_status,
+    get_purchasable_plan,
     payment_mode,
     purchase_membership,
 )
@@ -581,7 +581,7 @@ class MembershipPlanCatalogView(generics.ListAPIView):
     serializer_class = MembershipPlanPublicSerializer
 
     def get_queryset(self):
-        return get_available_plans()
+        return get_available_plans(self.request.user)
 
 
 class MembershipPaymentConfigView(APIView):
@@ -609,10 +609,7 @@ class MembershipCheckoutView(APIView):
 
         serializer = MembershipPurchaseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        plan = MembershipPlan.objects.filter(
-            pk=serializer.validated_data['plan_id'],
-            is_active=True,
-        ).first()
+        plan = get_purchasable_plan(request.user, serializer.validated_data['plan_id'])
         if plan is None:
             return Response({'detail': 'Unknown or inactive plan.'}, status=status.HTTP_400_BAD_REQUEST)
 

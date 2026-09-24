@@ -27,6 +27,7 @@ const TeacherClassRequestsPage = lazy(() => import('./pages/TeacherClassRequests
 const StaffDashboardPage = lazy(() => import('./pages/StaffDashboardPage.jsx'))
 const StaffMetricsPage = lazy(() => import('./pages/StaffMetricsPage.jsx'))
 const StaffSchedulePage = lazy(() => import('./pages/StaffSchedulePage.jsx'))
+const StaffBranchesPage = lazy(() => import('./pages/StaffBranchesPage.jsx'))
 const StaffTeacherLayout = lazy(() => import('./pages/StaffTeacherLayout.jsx'))
 const StaffClassCatalogPage = lazy(() => import('./pages/StaffClassCatalogPage.jsx'))
 const StaffCurriculumPage = lazy(() => import('./pages/StaffCurriculumPage.jsx'))
@@ -48,6 +49,7 @@ const StaffReportsPage = lazy(() => import('./pages/StaffReportsPage.jsx'))
 const StaffBrandingPage = lazy(() => import('./pages/StaffBrandingPage.jsx'))
 const BlogManagePage = lazy(() => import('./pages/BlogManagePage.jsx'))
 const StudentHomeDashboard = lazy(() => import('./pages/StudentHomeDashboard.jsx'))
+const TeacherHomeDashboard = lazy(() => import('./pages/TeacherHomeDashboard.jsx'))
 
 function PageLoader() {
   return <p className="page-intro">Loading…</p>
@@ -127,6 +129,7 @@ function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
           <div className="nav-section">Staff</div>
           <NavLink to="/staff" end className="nav-link">Dashboard</NavLink>
           <NavLink to="/staff/schedule" className="nav-link">{label('studio')} schedule</NavLink>
+          <NavLink to="/staff/branches" className="nav-link">Branches &amp; hours</NavLink>
           <NavLink to="/staff/requests" className="nav-link">Class requests</NavLink>
           <NavLink to="/staff/classes/new" className="nav-link">Create {label('class').toLowerCase()}</NavLink>
           <NavLink to="/staff/class-catalog" className="nav-link">Class roadmap</NavLink>
@@ -236,6 +239,12 @@ function HomePage({ me }) {
             <NavLink to="/staff/requests" className="btn secondary">Pending class requests</NavLink>
           </div>
         </div>
+      )}
+
+      {isTeacher && (
+        <Suspense fallback={<PageLoader />}>
+          <TeacherHomeDashboard canWriteReports={isStaff || can('write_reports')} />
+        </Suspense>
       )}
 
       {isTeacher && (
@@ -411,6 +420,7 @@ function AppRoutes() {
               <Route path="/teacher/curriculum" element={<TeacherCurriculumPage />} />
               <Route path="/staff" element={<StaffDashboardPage />} />
               <Route path="/staff/schedule" element={<StaffSchedulePage />} />
+              <Route path="/staff/branches" element={<StaffBranchesPage />} />
               <Route path="/staff/requests" element={<StaffClassRequestsPage />} />
               <Route path="/staff/classes/new" element={<StaffCreateClassPage />} />
               <Route path="/staff/class-catalog" element={<StaffClassCatalogPage />} />

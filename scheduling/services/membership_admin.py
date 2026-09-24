@@ -6,9 +6,10 @@ is recorded as a `Payment` with provider `staff` so reports stay accurate.
 
 from datetime import date, timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
-from scheduling.models import Booking, Membership, MembershipPlan, Payment, StaffActionLog
+from scheduling.models import Booking, ClassOffering, Membership, MembershipPlan, Payment, StaffActionLog
 from scheduling.services.membership import active_memberships_for, total_tickets_remaining
 from scheduling.services.payments import grant_plan_to_user
 from scheduling.services.staff_audit import log_staff_action
@@ -111,6 +112,8 @@ def grant_membership(actor, student, *, plan_id, months=1, amount_cents=0, note=
         return None, 'Plan not found.'
     if not plan.is_active:
         return None, 'That plan is inactive. Reactivate it first.'
+    if not plan.is_public and plan.for_user_id != student.id:
+        return None, 'That special membership belongs to another student.'
 
     months = _bounded_int(months, maximum=24) or 1
     try:
@@ -145,6 +148,81 @@ def grant_membership(actor, student, *, plan_id, months=1, amount_cents=0, note=
         membership_id=membership.id,
     )
     return student_membership_overview(student), None
+
+
+def create_special_membership(
+    actor,
+    student,
+    *,
+    name,
+    plan_type=MembershipPlan.PLAN_SUBSCRIPTION,
+    ticket_allowance=0,
+    price_cents=0,
+    billing_period_days=30,
+    description='',
+    subject='',
+    allowed_class_ids=None,
+    months=1,
+    amount_cents=0,
+    note='',
+    student_can_renew=False,
+):
+    """Build a private plan for one student and grant it immediately.
+
+    The plan is hidden from the student store, so staff can shape a one-off deal
+    without polluting the public catalog.
+    """
+    name = (name or '').strip()
+    if not name:
+        return None, 'Give the special membership a name.'
+    if plan_type not in dict(MembershipPlan.PLAN_TYPE_CHOICES):
+        return None, 'Choose a subscription or ticket pack.'
+
+    try:
+        ticket_allowance = int(ticket_allowance or 0)
+        price_cents = int(price_cents or 0)
+        billing_period_days = int(billing_period_days or 0)
+    except (TypeError, ValueError):
+        return None, 'Tickets, price, and length must be whole numbers.'
+    if ticket_allowance < 0 or ticket_allowance > MAX_TICKET_BALANCE:
+        return None, f'Tickets must be between 0 and {MAX_TICKET_BALANCE}.'
+    if price_cents < 0 or billing_period_days < 0:
+        return None, 'Price and length cannot be negative.'
+
+    class_ids = set(allowed_class_ids or [])
+    classes = list(ClassOffering.objects.filter(pk__in=class_ids))
+    if len(classes) != len(class_ids):
+        return None, 'One or more selected classes no longer exist.'
+
+    with transaction.atomic():
+        plan = MembershipPlan.objects.create(
+            name=name,
+            description=description or '',
+            plan_type=plan_type,
+            price_cents=price_cents,
+            billing_period_days=billing_period_days,
+            ticket_allowance=ticket_allowance,
+            subject=(subject or '').strip(),
+            is_active=True,
+            is_public=False,
+            for_user=student,
+            student_can_renew=bool(student_can_renew),
+        )
+        if classes:
+            plan.allowed_classes.set(classes)
+
+        overview, error = grant_membership(
+            actor,
+            student,
+            plan_id=plan.id,
+            months=months,
+            amount_cents=amount_cents,
+            note=note,
+        )
+        if error:
+            transaction.set_rollback(True)
+            return None, error
+    return overview, None
 
 
 def _get_membership(student, membership_id):

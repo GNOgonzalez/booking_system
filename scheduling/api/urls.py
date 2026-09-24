@@ -1,8 +1,10 @@
 from django.urls import path
 
 from progress.api.history import TeacherSessionHistoryPrivacyView, TeacherStudentHistoryView
+from progress.api.teacher_home import StaffTeacherHomeView, TeacherHomeView
 from scheduling.api import (
     blog_views,
+    branch_views,
     branding_views,
     class_catalog_views,
     class_request_views,
@@ -40,6 +42,16 @@ urlpatterns = [
     path('blog/<int:pk>/', blog_views.BlogPostDetailView.as_view(), name='api_blog_detail'),
     path('me/password/', views.PasswordChangeView.as_view(), name='api_password_change'),
     path('sessions/open/', views.OpenSessionListView.as_view(), name='api_open_sessions'),
+    path('sessions/today/', branch_views.StudentTodayView.as_view(), name='api_sessions_today'),
+    path('teacher/branches/', branch_views.TeacherBranchListView.as_view(), name='api_teacher_branches'),
+    path('teacher/branches/<int:branch_id>/day/', branch_views.BranchDayView.as_view(), name='api_teacher_branch_day'),
+    path('teacher/branches/<int:branch_id>/classes/', branch_views.TeacherBranchClassCreateView.as_view(), name='api_teacher_branch_classes'),
+    path('teacher/sessions/<int:session_id>/walk-ins/', branch_views.SessionWalkInToggleView.as_view(), name='api_session_walk_ins'),
+    path('staff/branches/', branch_views.StaffBranchListCreateView.as_view(), name='api_staff_branches'),
+    path('staff/branches/teacher-options/', branch_views.StaffBranchTeacherOptionsView.as_view(), name='api_staff_branch_teacher_options'),
+    path('staff/branches/<int:branch_id>/', branch_views.StaffBranchDetailView.as_view(), name='api_staff_branch_detail'),
+    path('staff/branches/<int:branch_id>/day/', branch_views.BranchDayView.as_view(), name='api_staff_branch_day'),
+    path('staff/branches/<int:branch_id>/classes/', branch_views.StaffBranchClassCreateView.as_view(), name='api_staff_branch_classes'),
     path('bookings/', views.MyBookingListView.as_view(), name='api_my_bookings'),
     path('bookings/create/', views.BookingCreateView.as_view(), name='api_booking_create'),
     path('bookings/<int:booking_id>/cancel/', views.BookingCancelView.as_view(), name='api_booking_cancel'),
@@ -72,6 +84,7 @@ urlpatterns = [
         views.TeacherSessionStudentsView.as_view(),
         name='api_teacher_session_students',
     ),
+    path('teacher/home/', TeacherHomeView.as_view(), name='api_teacher_home'),
     path('teacher/students/', views.TeacherStudentListView.as_view(), name='api_teacher_students'),
     path(
         'teacher/curriculum/students/',
@@ -92,6 +105,31 @@ urlpatterns = [
         'teacher/curriculum/modules/<int:module_id>/progress/',
         curriculum_views.TeacherCurriculumModuleProgressView.as_view(),
         name='api_teacher_curriculum_module_progress',
+    ),
+    path(
+        'teacher/curriculum/students/<int:student_id>/suggestions/',
+        curriculum_views.TeacherCurriculumSuggestionsView.as_view(),
+        name='api_teacher_curriculum_suggestions',
+    ),
+    path(
+        'teacher/curriculum/students/<int:student_id>/suggest/',
+        curriculum_views.TeacherCurriculumSuggestView.as_view(),
+        name='api_teacher_curriculum_suggest',
+    ),
+    path(
+        'teacher/curriculum/students/<int:student_id>/summary/',
+        curriculum_views.TeacherCurriculumSummaryView.as_view(),
+        name='api_teacher_curriculum_summary',
+    ),
+    path(
+        'teacher/curriculum/suggestions/<int:suggestion_id>/accept/',
+        curriculum_views.TeacherCurriculumSuggestionActionView.as_view(suggestion_action='accept'),
+        name='api_teacher_curriculum_suggestion_accept',
+    ),
+    path(
+        'teacher/curriculum/suggestions/<int:suggestion_id>/dismiss/',
+        curriculum_views.TeacherCurriculumSuggestionActionView.as_view(suggestion_action='dismiss'),
+        name='api_teacher_curriculum_suggestion_dismiss',
     ),
     path(
         'teacher/students/<int:student_id>/history/',
@@ -134,6 +172,11 @@ urlpatterns = [
     path('messages/', views.InboxListView.as_view(), name='api_inbox'),
     path('curriculum/me/', curriculum_views.StudentCurriculumMeView.as_view(), name='api_curriculum_me'),
     path(
+        'curriculum/me/supplementary/',
+        curriculum_views.StudentSupplementaryView.as_view(),
+        name='api_curriculum_me_supplementary',
+    ),
+    path(
         'curriculum/templates/',
         curriculum_views.CurriculumTemplateListView.as_view(),
         name='api_curriculum_templates',
@@ -175,6 +218,11 @@ urlpatterns = [
         'staff/students/<int:student_id>/membership/',
         staff_views.StaffStudentMembershipView.as_view(),
         name='api_staff_student_membership',
+    ),
+    path(
+        'staff/students/<int:student_id>/membership/special/',
+        staff_views.StaffStudentSpecialMembershipView.as_view(),
+        name='api_staff_student_special_membership',
     ),
     path(
         'staff/students/<int:student_id>/membership/<int:membership_id>/',
@@ -256,6 +304,11 @@ urlpatterns = [
         name='api_staff_teacher_scheduling_slots',
     ),
     path(
+        'staff/teachers/<int:teacher_id>/home/',
+        StaffTeacherHomeView.as_view(),
+        name='api_staff_teacher_home',
+    ),
+    path(
         'staff/teachers/<int:teacher_id>/students/',
         staff_views.StaffTeacherStudentListView.as_view(),
         name='api_staff_teacher_students',
@@ -279,6 +332,31 @@ urlpatterns = [
         'staff/teachers/<int:teacher_id>/curriculum/modules/<int:module_id>/progress/',
         curriculum_views.TeacherCurriculumModuleProgressView.as_view(),
         name='api_staff_teacher_curriculum_module_progress',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/students/<int:student_id>/suggestions/',
+        curriculum_views.TeacherCurriculumSuggestionsView.as_view(),
+        name='api_staff_teacher_curriculum_suggestions',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/students/<int:student_id>/suggest/',
+        curriculum_views.TeacherCurriculumSuggestView.as_view(),
+        name='api_staff_teacher_curriculum_suggest',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/students/<int:student_id>/summary/',
+        curriculum_views.TeacherCurriculumSummaryView.as_view(),
+        name='api_staff_teacher_curriculum_summary',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/suggestions/<int:suggestion_id>/accept/',
+        curriculum_views.TeacherCurriculumSuggestionActionView.as_view(suggestion_action='accept'),
+        name='api_staff_teacher_curriculum_suggestion_accept',
+    ),
+    path(
+        'staff/teachers/<int:teacher_id>/curriculum/suggestions/<int:suggestion_id>/dismiss/',
+        curriculum_views.TeacherCurriculumSuggestionActionView.as_view(suggestion_action='dismiss'),
+        name='api_staff_teacher_curriculum_suggestion_dismiss',
     ),
     path(
         'staff/teachers/<int:teacher_id>/permissions/',

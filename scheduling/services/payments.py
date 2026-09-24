@@ -8,6 +8,7 @@ set, direct POST /api/membership/ purchases are blocked — use Stripe Checkout
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from scheduling.models import Membership, MembershipPlan, Payment
@@ -78,12 +79,25 @@ def payment_settings_status(*, base_url=''):
     }
 
 
-def get_available_plans():
+def _purchasable_plans(user=None):
+    visible = Q(is_public=True)
+    if user is not None:
+        visible |= Q(is_public=False, for_user=user, student_can_renew=True)
+    return MembershipPlan.objects.filter(visible, is_active=True)
+
+
+def get_available_plans(user=None):
+    """Plans a student may buy: the public catalog, plus their own special plans
+    that staff marked renewable. Other students' private plans never show up."""
     return (
-        MembershipPlan.objects.filter(is_active=True)
+        _purchasable_plans(user)
         .prefetch_related('allowed_classes')
-        .order_by('plan_type', 'price_cents', 'name')
+        .order_by('is_public', 'plan_type', 'price_cents', 'name')
     )
+
+
+def get_purchasable_plan(user, plan_id):
+    return _purchasable_plans(user).filter(pk=plan_id).first()
 
 
 def record_payment(user, plan, membership, *, amount_cents, quantity=1, provider=None, status=None):
@@ -334,7 +348,7 @@ def purchase_subscription(user, plan, months=1):
 
 def purchase_membership(user, plan_id, months=1, membership_id=None):
     """Activate, extend, or top up a membership. Returns (membership, error)."""
-    plan = MembershipPlan.objects.filter(pk=plan_id, is_active=True).first()
+    plan = get_purchasable_plan(user, plan_id)
     if plan is None:
         return None, 'Unknown or inactive plan.'
 

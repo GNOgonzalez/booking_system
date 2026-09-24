@@ -18,6 +18,7 @@ from scheduling.api.serializers import (
     StaffMembershipGrantSerializer,
     StaffMembershipUpdateSerializer,
     StaffPasswordResetSerializer,
+    StaffSpecialMembershipSerializer,
     StaffUserCreateSerializer,
     StaffUserUpdateSerializer,
     StudentOptionSerializer,
@@ -40,6 +41,7 @@ from scheduling.services.availability import (
 from scheduling.services.meetings import create_meeting_link
 from scheduling.services.membership_admin import (
     adjust_tickets,
+    create_special_membership,
     grant_membership,
     student_membership_overview,
     update_membership,
@@ -615,7 +617,11 @@ class StaffStudentMembershipView(APIView):
             return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
         payload = student_membership_overview(student)
         payload['plans'] = MembershipPlanSerializer(
-            MembershipPlan.objects.filter(is_active=True).prefetch_related('allowed_classes'),
+            MembershipPlan.objects.filter(is_active=True, is_public=True).prefetch_related('allowed_classes'),
+            many=True,
+        ).data
+        payload['special_plans'] = MembershipPlanSerializer(
+            MembershipPlan.objects.filter(is_public=False, for_user=student).prefetch_related('allowed_classes'),
             many=True,
         ).data
         payload['recent_actions'] = list_staff_actions(limit=10, target_user=student)
@@ -634,6 +640,39 @@ class StaffStudentMembershipView(APIView):
             months=serializer.validated_data.get('months', 1),
             amount_cents=serializer.validated_data.get('amount_cents', 0),
             note=serializer.validated_data.get('note', ''),
+        )
+        if error:
+            return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class StaffStudentSpecialMembershipView(APIView):
+    """Create a private plan for one student and grant it in the same step."""
+
+    permission_classes = [IsStaff]
+
+    def post(self, request, student_id):
+        student = get_student(student_id)
+        if student is None:
+            return Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StaffSpecialMembershipSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        payload, error = create_special_membership(
+            request.user,
+            student,
+            name=data['name'],
+            description=data.get('description', ''),
+            plan_type=data.get('plan_type', MembershipPlan.PLAN_SUBSCRIPTION),
+            ticket_allowance=data.get('ticket_allowance', 0),
+            price_cents=data.get('price_cents', 0),
+            billing_period_days=data.get('billing_period_days', 30),
+            subject=data.get('subject', ''),
+            allowed_class_ids=data.get('allowed_class_ids'),
+            months=data.get('months', 1),
+            amount_cents=data.get('amount_cents', 0),
+            note=data.get('note', ''),
+            student_can_renew=data.get('student_can_renew', False),
         )
         if error:
             return Response({'detail': error}, status=status.HTTP_400_BAD_REQUEST)
@@ -770,11 +809,17 @@ class StaffClassOfferingListView(generics.ListAPIView):
 
 
 class StaffMembershipPlanListCreateView(generics.ListCreateAPIView):
+    """The public catalog. Pass ?private=1 to review one-off student plans instead."""
+
     permission_classes = [IsStaff]
     serializer_class = MembershipPlanSerializer
 
     def get_queryset(self):
-        return MembershipPlan.objects.prefetch_related('allowed_classes', 'allowed_classes__teacher')
+        qs = MembershipPlan.objects.prefetch_related(
+            'allowed_classes', 'allowed_classes__teacher',
+        ).select_related('for_user')
+        wants_private = self.request.query_params.get('private') == '1'
+        return qs.filter(is_public=not wants_private)
 
 
 class StaffMembershipPlanDetailView(generics.RetrieveUpdateDestroyAPIView):

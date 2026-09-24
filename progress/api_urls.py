@@ -75,6 +75,7 @@ urlpatterns = [
         api.StaffScoreDimensionDetailView.as_view(),
         name='api_staff_score_dimension_detail',
     ),
+    path('staff/feedback/', api.StaffFeedbackListView.as_view(), name='api_staff_feedback'),
     path(
         'staff/teachers/<int:teacher_id>/feedback/',
         api.StaffTeacherFeedbackListCreateView.as_view(),

@@ -45,7 +45,12 @@ export default function StaffCurriculumPage() {
       is_template: track.is_template,
       is_active: track.is_active,
       modules: track.modules?.length
-        ? track.modules.map((module) => ({ title: module.title, content: module.content || '' }))
+        ? track.modules.map((module) => ({
+          title: module.title,
+          content: module.content || '',
+          cefr_level: module.cefr_level || '',
+          skill_keys: module.skill_keys || [],
+        }))
         : [{ ...EMPTY_MODULE }],
     })
   }
@@ -69,7 +74,13 @@ export default function StaffCurriculumPage() {
       is_active: form.is_active,
       modules: form.modules
         .filter((row) => row.title.trim())
-        .map((row, index) => ({ title: row.title.trim(), content: row.content, sort_order: index })),
+        .map((row, index) => ({
+          title: row.title.trim(),
+          content: row.content,
+          sort_order: index,
+          cefr_level: row.cefr_level || '',
+          skill_keys: row.skill_keys || [],
+        })),
     }
     try {
       if (editingId === 'new') {
@@ -112,6 +123,10 @@ export default function StaffCurriculumPage() {
       <p className="page-intro">
         Premade paths students can pick, in order. Teachers can skip a module or build a custom path
         for assigned students.
+      </p>
+      <p className="card-meta">
+        The CEFR English path comes from <code>python manage.py seed_cefr_curriculum</code>. Editing its
+        modules here resets student progress on that track.
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
@@ -191,7 +206,10 @@ export default function StaffCurriculumPage() {
         <div key={track.id} className="card">
           <div className="card-row">
             <div>
-              <div className="card-title">{track.title}</div>
+              <div className="card-title">
+                {track.title}
+                {track.framework === 'cefr' && <> <span className="badge">CEFR A1–C2</span></>}
+              </div>
               <div className="card-meta">
                 {track.module_count} module{track.module_count === 1 ? '' : 's'}
                 {track.is_template ? ' · Premade' : ' · Custom'}

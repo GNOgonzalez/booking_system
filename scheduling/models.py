@@ -171,6 +171,37 @@ class SpecialAvailability(models.Model):
         return f"{self.teacher.username} — {label}"
 
 
+class Branch(models.Model):
+    """A physical studio location with its own opening hours."""
+
+    name = models.CharField(max_length=120, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name_plural = 'branches'
+
+    def __str__(self):
+        return self.name
+
+
+class BranchHours(models.Model):
+    """One weekly opening window for a branch. Several rows per weekday allow split shifts."""
+
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='hours')
+    weekday = models.IntegerField(choices=AvailabilityBlock.WEEKDAY_CHOICES)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    class Meta:
+        ordering = ['weekday', 'start_time']
+        verbose_name_plural = 'branch hours'
+
+    def __str__(self):
+        return f'{self.branch.name} — {self.get_weekday_display()} {self.start_time}-{self.end_time}'
+
+
 class TeacherPermission(models.Model):
     """Per-teacher capability flags — staff enables or disables studio features."""
 
@@ -264,6 +295,10 @@ class StudioLLMConfig(models.Model):
     )
     model_name = models.CharField(max_length=120, default='gpt-4o-mini')
     is_enabled = models.BooleanField(default=False)
+    adaptive_curriculum_enabled = models.BooleanField(
+        default=False,
+        help_text='Let the AI read reports and suggest curriculum steps. Teachers still approve each one.',
+    )
     max_tokens = models.PositiveIntegerField(default=500)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -328,6 +363,18 @@ class Session(models.Model):
     status = models.CharField(
         max_length=20,
         choices=[('open', 'Open'), ('cancelled', 'Cancelled')],
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sessions',
+        help_text='Set for in-branch classes placed inside branch hours. Blank means a private session.',
+    )
+    accepts_walk_ins = models.BooleanField(
+        default=False,
+        help_text='Students may still book while the class is in progress.',
     )
     meeting_provider = models.CharField(
         max_length=20,
@@ -489,6 +536,22 @@ class MembershipPlan(models.Model):
         help_text='Tickets granted each time a student purchases one billing period.',
     )
     is_active = models.BooleanField(default=True)
+    is_public = models.BooleanField(
+        default=True,
+        help_text='Public plans appear in the student store. Private plans are staff-granted only.',
+    )
+    for_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='private_membership_plans',
+        help_text='Set on a private plan built for one student.',
+    )
+    student_can_renew = models.BooleanField(
+        default=False,
+        help_text='Private plans only: the owning student may buy or renew it from their membership page.',
+    )
     subject = models.CharField(
         max_length=100,
         blank=True,
@@ -812,8 +875,22 @@ class TeacherStudentAssignment(models.Model):
 class CurriculumTrack(models.Model):
     """Ordered learning path. Templates are student-pickable; custom tracks are teacher-made."""
 
+    FRAMEWORK_CUSTOM = 'custom'
+    FRAMEWORK_CEFR = 'cefr'
+    FRAMEWORK_CHOICES = [
+        (FRAMEWORK_CUSTOM, 'Custom'),
+        (FRAMEWORK_CEFR, 'CEFR'),
+    ]
+
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    framework = models.CharField(max_length=20, choices=FRAMEWORK_CHOICES, default=FRAMEWORK_CUSTOM)
+    subject = models.CharField(max_length=100, blank=True)
+    cefr_band = models.CharField(
+        max_length=2,
+        blank=True,
+        help_text='Set when the whole track sits at one CEFR level.',
+    )
     is_template = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
@@ -838,9 +915,17 @@ class CurriculumModule(models.Model):
         on_delete=models.CASCADE,
         related_name='modules',
     )
+    CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
+
     title = models.CharField(max_length=200)
     content = models.TextField(blank=True)
     sort_order = models.PositiveIntegerField(default=0)
+    cefr_level = models.CharField(max_length=2, blank=True)
+    skill_keys = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='ScoreDimension keys this module trains, e.g. ["grammar", "writing"].',
+    )
 
     class Meta:
         ordering = ['sort_order', 'id']
@@ -918,6 +1003,131 @@ class StudentModuleProgress(models.Model):
 
     def __str__(self):
         return f'{self.student} {self.module} ({self.status})'
+
+
+class CurriculumSuggestion(models.Model):
+    """A proposed next step for one student. Nothing changes until a teacher accepts it."""
+
+    KIND_NEXT_MODULE = 'next_module'
+    KIND_SUPPLEMENTARY = 'supplementary'
+    KIND_REVIEW = 'review'
+    KIND_CHOICES = [
+        (KIND_NEXT_MODULE, 'Move to next module'),
+        (KIND_SUPPLEMENTARY, 'Supplementary material'),
+        (KIND_REVIEW, 'Review a module'),
+    ]
+
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_DISMISSED = 'dismissed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_DISMISSED, 'Dismissed'),
+    ]
+
+    SOURCE_RULES = 'rules'
+    SOURCE_LLM = 'llm'
+    SOURCE_CHOICES = [
+        (SOURCE_RULES, 'Rules'),
+        (SOURCE_LLM, 'AI'),
+    ]
+
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='curriculum_suggestions',
+    )
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='curriculum_suggestions_made',
+    )
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='curriculum_suggestions',
+    )
+    feedback = models.ForeignKey(
+        'progress.SessionFeedback',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='curriculum_suggestions',
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default=SOURCE_RULES)
+    title = models.CharField(max_length=200)
+    rationale = models.TextField(blank=True)
+    content = models.TextField(blank=True)
+    target_module = models.ForeignKey(
+        CurriculumModule,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='suggestions',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='curriculum_suggestions_resolved',
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.student} — {self.title} ({self.status})'
+
+
+class StudentSupplementaryMaterial(models.Model):
+    """Extra practice attached to one student, outside the shared track."""
+
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='supplementary_materials',
+    )
+    title = models.CharField(max_length=200)
+    content = models.TextField(blank=True)
+    module = models.ForeignKey(
+        CurriculumModule,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='supplementary_materials',
+    )
+    suggestion = models.OneToOneField(
+        CurriculumSuggestion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='material',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='supplementary_materials_created',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.student} — {self.title}'
 
 
 class StaffAlert(models.Model):

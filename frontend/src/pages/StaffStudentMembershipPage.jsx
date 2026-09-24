@@ -10,8 +10,25 @@ const PROVIDER_LABELS = {
   staff: 'Recorded by staff',
 }
 
+const EMPTY_SPECIAL = {
+  name: '',
+  plan_type: 'subscription',
+  ticket_allowance: '8',
+  billing_period_days: '30',
+  price_dollars: '0',
+  amount_dollars: '0',
+  subject: '',
+  student_can_renew: false,
+}
+
 function money(cents) {
   return `$${((cents || 0) / 100).toFixed(2)}`
+}
+
+function dollarsToCents(value) {
+  const amount = Number(value || 0)
+  if (Number.isNaN(amount) || amount < 0) return null
+  return Math.round(amount * 100)
 }
 
 function formatDate(value) {
@@ -32,6 +49,7 @@ export default function StaffStudentMembershipPage() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [grant, setGrant] = useState({ plan_id: '', months: '1', amount_dollars: '0', note: '' })
+  const [special, setSpecial] = useState({ ...EMPTY_SPECIAL })
   const [ticketForm, setTicketForm] = useState({})
   const [note, setNote] = useState('')
   const [password, setPassword] = useState('')
@@ -99,6 +117,43 @@ export default function StaffStudentMembershipPage() {
     )
     if (ok) setGrant({ plan_id: '', months: '1', amount_dollars: '0', note: '' })
   }
+
+  const submitSpecial = async (e) => {
+    e.preventDefault()
+    const priceCents = dollarsToCents(special.price_dollars)
+    const collectedCents = dollarsToCents(special.amount_dollars)
+    if (priceCents === null || collectedCents === null) {
+      setError('Prices must be zero or more.')
+      return
+    }
+    const ok = await run(
+      `${basePath}special/`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: special.name.trim(),
+          plan_type: special.plan_type,
+          ticket_allowance: Number(special.ticket_allowance) || 0,
+          billing_period_days: Number(special.billing_period_days) || 0,
+          price_cents: priceCents,
+          amount_cents: collectedCents,
+          subject: special.subject.trim(),
+          student_can_renew: special.student_can_renew,
+          note,
+        }),
+      },
+      'Special membership created and granted.',
+    )
+    if (ok) setSpecial({ ...EMPTY_SPECIAL })
+  }
+
+  const setPlanRenewable = (plan, allowed) => run(
+    `/api/staff/membership-plans/${plan.id}/`,
+    { method: 'PATCH', body: JSON.stringify({ student_can_renew: allowed }) },
+    allowed
+      ? `${student.username} can now renew “${plan.name}” from their membership page.`
+      : `“${plan.name}” is staff-only again.`,
+  )
 
   const patchMembership = (membershipId, body, successMessage) => run(
     `${basePath}${membershipId}/`,
@@ -295,7 +350,7 @@ export default function StaffStudentMembershipPage() {
       ))}
 
       <form onSubmit={submitGrant} className="card">
-        <div className="card-title">Add a membership</div>
+        <div className="card-title">Add a studio plan</div>
         <p className="card-meta">
           Leave the amount at 0 to comp it. Enter what you collected to record a cash or
           bank-transfer sale — it shows up in reports as “recorded by staff”.
@@ -347,6 +402,126 @@ export default function StaffStudentMembershipPage() {
         </div>
         <button type="submit" disabled={busy || !grant.plan_id}>Add membership</button>
       </form>
+
+      <form onSubmit={submitSpecial} className="card">
+        <div className="card-title">Build a special membership</div>
+        <p className="card-meta">
+          A one-off deal for {student.username} only. It never appears in the student store, so
+          you can set your own tickets, price, and length without touching the studio catalog.
+        </p>
+        <div className="row">
+          <div className="field grow">
+            <label>Name</label>
+            <input
+              value={special.name}
+              onChange={(e) => setSpecial({ ...special, name: e.target.value })}
+              placeholder="e.g. Saturday intensive — 6 lessons"
+              required
+            />
+          </div>
+          <div className="field">
+            <label>Type</label>
+            <select
+              value={special.plan_type}
+              onChange={(e) => setSpecial({ ...special, plan_type: e.target.value })}
+            >
+              <option value="subscription">Subscription</option>
+              <option value="ticket_pack">Ticket pack</option>
+            </select>
+          </div>
+        </div>
+        <div className="row">
+          <div className="field">
+            <label>Tickets</label>
+            <input
+              type="number"
+              min="0"
+              max="999"
+              value={special.ticket_allowance}
+              onChange={(e) => setSpecial({ ...special, ticket_allowance: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Valid for (days)</label>
+            <input
+              type="number"
+              min="0"
+              value={special.billing_period_days}
+              onChange={(e) => setSpecial({ ...special, billing_period_days: e.target.value })}
+              disabled={special.plan_type === 'ticket_pack'}
+            />
+          </div>
+          <div className="field">
+            <label>List price ($)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={special.price_dollars}
+              onChange={(e) => setSpecial({ ...special, price_dollars: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Amount collected ($)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={special.amount_dollars}
+              onChange={(e) => setSpecial({ ...special, amount_dollars: e.target.value })}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <label>Subject (optional)</label>
+          <input
+            value={special.subject}
+            onChange={(e) => setSpecial({ ...special, subject: e.target.value })}
+            placeholder="Leave blank to cover every class"
+          />
+        </div>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={special.student_can_renew}
+            onChange={(e) => setSpecial({ ...special, student_can_renew: e.target.checked })}
+          />
+          Let {student.username} renew this from their membership page
+        </label>
+        <button type="submit" disabled={busy || !special.name.trim()}>
+          Create and grant
+        </button>
+      </form>
+
+      {(data.special_plans || []).length > 0 && (
+        <div className="card">
+          <div className="card-title">Special memberships built for {student.username}</div>
+          <ul className="teacher-queue-list">
+            {data.special_plans.map((plan) => (
+              <li key={plan.id} className="card-row">
+                <div>
+                  <strong>{plan.name}</strong>
+                  <div className="card-meta">
+                    {plan.plan_type_display} · {plan.ticket_allowance} tickets ·{' '}
+                    {money(plan.price_cents)}
+                    {plan.subject ? ` · ${plan.subject}` : ''}
+                  </div>
+                </div>
+                {!plan.is_active && <span className="badge badge--muted">Inactive</span>}
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(plan.student_can_renew)}
+                    disabled={busy}
+                    onChange={(e) => setPlanRenewable(plan, e.target.checked)}
+                  />
+                  Student can renew
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <h2>Upcoming {labels('session').toLowerCase()}</h2>
       {!data.upcoming_bookings.length && (

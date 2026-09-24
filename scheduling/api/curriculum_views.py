@@ -6,9 +6,22 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from progress.models import SessionFeedback
 from scheduling.api.permissions import IsStaff, IsStudent, IsTeacherOrStaff
 from scheduling.api.serializers import StudentOptionSerializer
 from scheduling.models import CurriculumModule, Profile
+from scheduling.services.adaptive_curriculum import (
+    apply_suggestion,
+    dismiss_suggestion,
+    generate_suggestions,
+    get_suggestion,
+    list_suggestions,
+    list_supplementary,
+    periodic_summary,
+    serialize_suggestion,
+    serialize_supplementary,
+    student_learning_signals,
+)
 from scheduling.services.curriculum import (
     create_custom_track_for_students,
     create_track,
@@ -99,6 +112,9 @@ class StaffCurriculumTrackListCreateView(APIView):
             is_active=request.data.get('is_active', True),
             created_by=request.user,
             modules=request.data.get('modules'),
+            framework=request.data.get('framework', 'custom'),
+            subject=request.data.get('subject', ''),
+            cefr_band=request.data.get('cefr_band', ''),
         )
         if err:
             return Response({'detail': err}, status=status.HTTP_400_BAD_REQUEST)
@@ -126,6 +142,9 @@ class StaffCurriculumTrackDetailView(APIView):
             is_template=data['is_template'] if 'is_template' in data else None,
             is_active=data['is_active'] if 'is_active' in data else None,
             modules=data['modules'] if 'modules' in data else None,
+            framework=data['framework'] if 'framework' in data else None,
+            subject=data['subject'] if 'subject' in data else None,
+            cefr_band=data['cefr_band'] if 'cefr_band' in data else None,
         )
         if err:
             return Response({'detail': err}, status=status.HTTP_400_BAD_REQUEST)
@@ -228,3 +247,120 @@ class TeacherCurriculumModuleProgressView(APIView):
             'status': row.status,
             'enrollment': serialize_enrollment(enrollment, student=student),
         })
+
+
+def _curriculum_scope(request, teacher_id, student, *, write):
+    """(teacher, error_response) after roster + manage_curriculum checks."""
+    teacher = _teacher_from_request(request, teacher_id)
+    if teacher is None:
+        return None, Response({'detail': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+    if write and not user_is_staff(request.user) and not teacher_can(request.user, 'manage_curriculum'):
+        return None, permission_denied_response('manage_curriculum')
+    if student is None:
+        return None, Response({'detail': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+    if not teacher_can_manage_student(teacher, student):
+        return None, Response({'detail': 'You are not assigned to this student.'}, status=status.HTTP_403_FORBIDDEN)
+    return teacher, None
+
+
+def _suggestions_payload(student):
+    pending, resolved = list_suggestions(student)
+    return {
+        'pending': [serialize_suggestion(s) for s in pending],
+        'recent': [serialize_suggestion(s) for s in resolved],
+    }
+
+
+class TeacherCurriculumSuggestionsView(APIView):
+    """Pending + recently resolved suggestions, with the signals that drive them."""
+
+    permission_classes = [IsTeacherOrStaff]
+
+    def get(self, request, student_id, teacher_id=None):
+        student = get_student(student_id)
+        teacher, error = _curriculum_scope(request, teacher_id, student, write=False)
+        if error:
+            return error
+        return Response({
+            **_suggestions_payload(student),
+            'signals': student_learning_signals(student, teacher=teacher),
+        })
+
+
+class TeacherCurriculumSuggestView(APIView):
+    """Generate fresh pending suggestions: { session_id?, feedback_id? }."""
+
+    permission_classes = [IsTeacherOrStaff]
+
+    def post(self, request, student_id, teacher_id=None):
+        student = get_student(student_id)
+        teacher, error = _curriculum_scope(request, teacher_id, student, write=True)
+        if error:
+            return error
+        feedback = None
+        feedback_id = request.data.get('feedback_id')
+        if feedback_id:
+            feedback = SessionFeedback.objects.filter(pk=feedback_id, student=student).first()
+        created, info = generate_suggestions(
+            student,
+            teacher=teacher,
+            feedback=feedback,
+            session=feedback.session if feedback else None,
+        )
+        return Response(
+            {
+                'created': [serialize_suggestion(s) for s in created],
+                'used_llm': info['used_llm'],
+                'llm_error': info['llm_error'],
+                'signals': info['signals'],
+                **_suggestions_payload(student),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class TeacherCurriculumSuggestionActionView(APIView):
+    """Accept or dismiss one suggestion."""
+
+    permission_classes = [IsTeacherOrStaff]
+    suggestion_action = 'accept'
+
+    def post(self, request, suggestion_id, teacher_id=None):
+        suggestion = get_suggestion(suggestion_id)
+        if suggestion is None:
+            return Response({'detail': 'Suggestion not found.'}, status=status.HTTP_404_NOT_FOUND)
+        student = suggestion.student
+        _, error = _curriculum_scope(request, teacher_id, student, write=True)
+        if error:
+            return error
+        if self.suggestion_action == 'accept':
+            result, err = apply_suggestion(suggestion, request.user)
+        else:
+            result, err = dismiss_suggestion(suggestion, request.user)
+        if err:
+            return Response({'detail': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'suggestion': serialize_suggestion(get_suggestion(result.id)),
+            'enrollment': serialize_enrollment(get_active_enrollment(student), student=student),
+            **_suggestions_payload(student),
+        })
+
+
+class TeacherCurriculumSummaryView(APIView):
+    """Progress over ?days= (7, 30, or 90)."""
+
+    permission_classes = [IsTeacherOrStaff]
+
+    def get(self, request, student_id, teacher_id=None):
+        student = get_student(student_id)
+        teacher, error = _curriculum_scope(request, teacher_id, student, write=False)
+        if error:
+            return error
+        return Response(periodic_summary(student, teacher=teacher, days=request.query_params.get('days', 30)))
+
+
+class StudentSupplementaryView(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        return Response([serialize_supplementary(m) for m in list_supplementary(request.user)])

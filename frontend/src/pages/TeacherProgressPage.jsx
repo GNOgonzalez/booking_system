@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import StudentHistoryPanel from '../components/StudentHistoryPanel.jsx'
 import { useScoreDimensions, scoreValue, emptyScores, scoreOptions, defaultScore } from '../hooks/useScoreDimensions.js'
@@ -8,12 +9,20 @@ import { useTeacherPermissions } from '../hooks/useTeacherPermissions.js'
 export default function TeacherProgressPage() {
   const { isStaff, paths } = useTeacherScope()
   const { can } = useTeacherPermissions()
+  // The teacher home queue links straight here with the lesson already chosen.
+  const [searchParams] = useSearchParams()
   const [feedback, setFeedback] = useState([])
   const [students, setStudents] = useState([])
   const [sessions, setSessions] = useState([])
-  const [form, setForm] = useState({ student: '', session: '', scores: {}, class_notes: '' })
+  const [form, setForm] = useState({
+    student: searchParams.get('student') || '',
+    session: searchParams.get('session') || '',
+    scores: {},
+    class_notes: '',
+  })
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [savedStudentId, setSavedStudentId] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const canEdit = isStaff || can('write_reports')
@@ -91,6 +100,7 @@ export default function TeacherProgressPage() {
         body: JSON.stringify(payload),
       })
       setMessage('Feedback saved.')
+      setSavedStudentId(Number(form.student))
       setForm({ ...form, class_notes: '' })
       load()
     } catch (err) {
@@ -170,7 +180,19 @@ export default function TeacherProgressPage() {
     <div>
       {!isStaff && <h1>Student progress</h1>}
       <p className="page-intro">Rate each skill after a session; students see the trends.</p>
-      {message && <div className="success">{message}</div>}
+      {message && (
+        <div className="success">
+          {message}
+          {savedStudentId && message === 'Feedback saved.' && (
+            <>
+              {' '}
+              <Link to={`${paths.curriculumPage}?student=${savedStudentId}`}>
+                View curriculum suggestions
+              </Link>
+            </>
+          )}
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
 
       {canEdit ? (

@@ -16,7 +16,7 @@ def sessions_for_list(queryset):
     """List queryset with common select_related + confirmed bookings, no N+1."""
     confirmed = Booking.objects.filter(status='confirmed').select_related('student')
     return annotate_confirmed_count(
-        queryset.select_related('teacher', 'class_offering', 'class_topic').prefetch_related(
+        queryset.select_related('teacher', 'class_offering', 'class_topic', 'branch').prefetch_related(
             Prefetch('bookings', queryset=confirmed, to_attr='confirmed_bookings'),
         ),
     )

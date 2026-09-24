@@ -32,6 +32,8 @@ function StatCard({ label, value, meta }) {
 export default function StaffReportsPage() {
   const [days, setDays] = useState(30)
   const [report, setReport] = useState(null)
+  const [feedback, setFeedback] = useState(null)
+  const [teacherFilter, setTeacherFilter] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -43,6 +45,13 @@ export default function StaffReportsPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [days])
+
+  useEffect(() => {
+    const teacherQuery = teacherFilter ? `&teacher_id=${teacherFilter}` : ''
+    apiFetch(`/api/progress/staff/feedback/?days=${days}${teacherQuery}`)
+      .then(setFeedback)
+      .catch((err) => setError(err.message))
+  }, [days, teacherFilter])
 
   const financials = report?.financials
   const bookings = report?.bookings
@@ -257,6 +266,76 @@ export default function StaffReportsPage() {
             ) : (
               <p className="card-meta">No teachers in this period.</p>
             )}
+          </section>
+
+          <section className="reports-section">
+            <h2>Completed session reports</h2>
+            <div className="card">
+              <div className="card-row">
+                <p className="card-meta">
+                  {feedback
+                    ? `${feedback.total} report${feedback.total === 1 ? '' : 's'} written in this period.`
+                    : 'Loading reports…'}
+                </p>
+                <div className="field">
+                  <label htmlFor="report-teacher-filter">Teacher</label>
+                  <select
+                    id="report-teacher-filter"
+                    value={teacherFilter}
+                    onChange={(e) => setTeacherFilter(e.target.value)}
+                  >
+                    <option value="">All teachers</option>
+                    {teachers.rows.map((row) => (
+                      <option key={row.id} value={row.id}>{row.username}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {feedback?.reports?.length ? (
+                <>
+                  <table className="reports-table">
+                    <thead>
+                      <tr>
+                        <th>Written</th>
+                        <th>Teacher</th>
+                        <th>Student</th>
+                        <th>Session</th>
+                        <th>Notes</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {feedback.reports.map((row) => (
+                        <tr key={row.id}>
+                          <td>{formatWhen(row.created_at)}</td>
+                          <td>{row.teacher_name}</td>
+                          <td>{row.student_name}</td>
+                          <td>
+                            {row.session_title || 'No session linked'}
+                            {row.subject && <div className="card-meta">{row.subject}</div>}
+                          </td>
+                          <td>
+                            {row.notes_excerpt || <span className="card-meta">No notes</span>}
+                            {row.notes_truncated && '…'}
+                          </td>
+                          <td>
+                            <Link to={`/staff/teachers/${row.teacher_id}/progress`}>Open</Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {feedback.total > feedback.returned && (
+                    <p className="card-meta">
+                      Showing the {feedback.returned} most recent. Open a teacher to see all of theirs.
+                    </p>
+                  )}
+                </>
+              ) : (
+                feedback && <p className="card-meta">No reports written in this period.</p>
+              )}
+            </div>
           </section>
 
           <section className="reports-section">

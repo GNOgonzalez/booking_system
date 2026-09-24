@@ -44,6 +44,7 @@ class SessionSerializer(serializers.ModelSerializer):
     ticket_cost = serializers.SerializerMethodField()
     student_booked = serializers.SerializerMethodField()
     students = serializers.SerializerMethodField()
+    branch_name = serializers.CharField(source='branch.name', read_only=True, default=None)
 
     class Meta:
         model = Session
@@ -52,6 +53,9 @@ class SessionSerializer(serializers.ModelSerializer):
             'title',
             'teacher',
             'teacher_name',
+            'branch',
+            'branch_name',
+            'accepts_walk_ins',
             'class_offering',
             'class_topic_id',
             'class_offering_label',
@@ -71,7 +75,10 @@ class SessionSerializer(serializers.ModelSerializer):
             'student_booked',
             'students',
         ]
-        read_only_fields = ['status', 'meeting_url', 'title', 'teacher', 'meeting_provider_display']
+        read_only_fields = [
+            'status', 'meeting_url', 'title', 'teacher', 'meeting_provider_display',
+            'branch', 'branch_name',
+        ]
 
     def get_class_topic(self, obj):
         if obj.class_topic_id:
@@ -424,6 +431,30 @@ class StaffMembershipGrantSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=300)
 
 
+class StaffSpecialMembershipSerializer(serializers.Serializer):
+    """A one-off plan built for a single student, hidden from the store."""
+
+    name = serializers.CharField(max_length=100)
+    description = serializers.CharField(required=False, allow_blank=True)
+    plan_type = serializers.ChoiceField(
+        choices=MembershipPlan.PLAN_TYPE_CHOICES,
+        required=False,
+        default=MembershipPlan.PLAN_SUBSCRIPTION,
+    )
+    ticket_allowance = serializers.IntegerField(required=False, min_value=0, max_value=999, default=0)
+    price_cents = serializers.IntegerField(required=False, min_value=0, default=0)
+    billing_period_days = serializers.IntegerField(required=False, min_value=0, max_value=3650, default=30)
+    subject = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    allowed_class_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+    )
+    months = serializers.IntegerField(required=False, min_value=1, max_value=24, default=1)
+    amount_cents = serializers.IntegerField(required=False, min_value=0, default=0)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=300)
+    student_can_renew = serializers.BooleanField(required=False, default=False)
+
+
 class StaffMembershipUpdateSerializer(serializers.Serializer):
     tickets_delta = serializers.IntegerField(required=False)
     is_active = serializers.BooleanField(required=False)
@@ -505,6 +536,7 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
     includes_all_classes = serializers.BooleanField(read_only=True)
     plan_type_display = serializers.CharField(source='get_plan_type_display', read_only=True)
     price_display = serializers.SerializerMethodField()
+    for_user_name = serializers.CharField(source='for_user.username', read_only=True, default=None)
 
     class Meta:
         model = MembershipPlan
@@ -519,13 +551,17 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
             'billing_period_days',
             'ticket_allowance',
             'is_active',
+            'is_public',
+            'for_user',
+            'for_user_name',
+            'student_can_renew',
             'subject',
             'includes_all_classes',
             'allowed_class_ids',
             'allowed_classes',
             'created_at',
         ]
-        read_only_fields = ['created_at', 'includes_all_classes']
+        read_only_fields = ['created_at', 'includes_all_classes', 'is_public', 'for_user', 'for_user_name']
 
     def get_price_display(self, obj):
         return f'${obj.price_cents / 100:.2f}'
@@ -552,6 +588,7 @@ class MembershipPlanPublicSerializer(serializers.ModelSerializer):
             'subject',
             'includes_all_classes',
             'allowed_classes',
+            'is_public',
         ]
 
     def get_price_display(self, obj):

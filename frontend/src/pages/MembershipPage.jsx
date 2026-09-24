@@ -350,6 +350,7 @@ export default function MembershipPage() {
               {subscriptionPlans.map((plan) => (
                 <option key={plan.id} value={plan.id}>
                   {plan.name}
+                  {plan.is_public === false ? ' (just for you)' : ''}
                   {ownedPlanIds.has(plan.id) ? ' (owned)' : ''}
                   {' — '}
                   {plan.price_display} / {plan.billing_period_days} days ({plan.ticket_allowance} tickets)
@@ -380,7 +381,7 @@ export default function MembershipPage() {
             <select value={ticketPackId} onChange={(e) => setTicketPackId(e.target.value)} required>
               {ticketPacks.map((plan) => (
                 <option key={plan.id} value={plan.id}>
-                  {plan.name} — {plan.price_display} ({plan.ticket_allowance} ticket{plan.ticket_allowance === 1 ? '' : 's'})
+                  {plan.name}{plan.is_public === false ? ' (just for you)' : ''} — {plan.price_display} ({plan.ticket_allowance} ticket{plan.ticket_allowance === 1 ? '' : 's'})
                 </option>
               ))}
             </select>

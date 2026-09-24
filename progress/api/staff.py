@@ -14,10 +14,24 @@ from progress.homework_services import (
     serialize_assignment,
 )
 from progress.models import HomeworkAssignment, SessionFeedback
+from progress.staff_feedback import studio_feedback
 from scheduling.api.permissions import IsStaff
 from scheduling.models import Session
 
 User = get_user_model()
+
+
+class StaffFeedbackListView(APIView):
+    """Studio-wide completed session reports, newest first."""
+
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        return Response(studio_feedback(
+            days=request.query_params.get('days'),
+            teacher_id=request.query_params.get('teacher_id'),
+        ))
+
 
 class StaffTeacherFeedbackListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsStaff]

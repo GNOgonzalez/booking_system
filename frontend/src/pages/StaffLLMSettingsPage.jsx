@@ -16,6 +16,7 @@ export default function StaffLLMSettingsPage() {
     base_url: '',
     model_name: '',
     is_enabled: false,
+    adaptive_curriculum_enabled: false,
     max_tokens: 500,
     api_key: '',
   })
@@ -33,6 +34,7 @@ export default function StaffLLMSettingsPage() {
           base_url: data.base_url || '',
           model_name: data.model_name || '',
           is_enabled: data.is_enabled,
+          adaptive_curriculum_enabled: Boolean(data.adaptive_curriculum_enabled),
           max_tokens: data.max_tokens,
           api_key: '',
         })
@@ -55,6 +57,7 @@ export default function StaffLLMSettingsPage() {
         base_url: form.base_url,
         model_name: form.model_name,
         is_enabled: form.is_enabled,
+        adaptive_curriculum_enabled: form.adaptive_curriculum_enabled,
         max_tokens: Number(form.max_tokens),
       }
       if (form.api_key.trim()) {
@@ -113,6 +116,22 @@ export default function StaffLLMSettingsPage() {
           <div>
             <div className="card-title">Enable studio AI</div>
             <div className="card-meta">When off, no teacher can use AI features regardless of permission.</div>
+          </div>
+        </label>
+
+        <label className="permission-row card" style={{ marginBottom: '1rem' }}>
+          <input
+            type="checkbox"
+            checked={form.adaptive_curriculum_enabled}
+            onChange={(e) => setForm({ ...form, adaptive_curriculum_enabled: e.target.checked })}
+          />
+          <div>
+            <div className="card-title">Adaptive curriculum suggestions</div>
+            <div className="card-meta">
+              When a teacher clicks &ldquo;Suggest next step&rdquo;, also ask the AI (same provider and key as
+              above) to read recent reports and propose modules. Teachers still approve every suggestion.
+              Only runs for teachers with the AI permission; rule-based suggestions work without it.
+            </div>
           </div>
         </label>
 

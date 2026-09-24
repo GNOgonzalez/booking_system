@@ -24,6 +24,7 @@ function dollarsToCents(value) {
 export default function StaffMembershipPlansPage() {
   const { labels, label } = useGlossary()
   const [plans, setPlans] = useState([])
+  const [privatePlans, setPrivatePlans] = useState([])
   const [classes, setClasses] = useState([])
   const [form, setForm] = useState(EMPTY_FORM)
   const [error, setError] = useState('')
@@ -33,10 +34,12 @@ export default function StaffMembershipPlansPage() {
   const load = () => {
     Promise.all([
       apiFetch('/api/staff/membership-plans/'),
+      apiFetch('/api/staff/membership-plans/?private=1'),
       apiFetch('/api/staff/class-offerings/'),
     ])
-      .then(([planRows, classRows]) => {
+      .then(([planRows, privateRows, classRows]) => {
         setPlans(planRows)
+        setPrivatePlans(privateRows)
         setClasses(classRows)
       })
       .catch((err) => setError(err.message))
@@ -294,6 +297,32 @@ export default function StaffMembershipPlansPage() {
       ))}
       {!plans.length && !error && (
         <p className="card-meta">No membership plans yet. Create one above.</p>
+      )}
+
+      {privatePlans.length > 0 && (
+        <>
+          <h2 style={{ marginTop: '1.5rem' }}>Special memberships</h2>
+          <p className="card-meta">
+            One-off plans built for a single {label('student').toLowerCase()}. Other students never see
+            them; the owner only sees one in their store when it is marked renewable. Create and edit
+            these from that {label('student').toLowerCase()}&apos;s page.
+          </p>
+          {privatePlans.map((plan) => (
+            <div key={plan.id} className={`card${plan.is_active ? '' : ' card--inactive'}`}>
+              <div className="card-title">
+                {plan.name}
+                <span className="badge badge--muted">{plan.for_user_name}</span>
+                {plan.student_can_renew && <span className="badge badge--success">Student can renew</span>}
+                {!plan.is_active && <span className="badge badge--muted">Inactive</span>}
+              </div>
+              <div className="card-meta">
+                {plan.price_display} · {plan.ticket_allowance} ticket
+                {plan.ticket_allowance === 1 ? '' : 's'}
+                {plan.plan_type === 'subscription' ? ` · ${plan.billing_period_days} days` : ''}
+              </div>
+            </div>
+          ))}
+        </>
       )}
     </div>
   )

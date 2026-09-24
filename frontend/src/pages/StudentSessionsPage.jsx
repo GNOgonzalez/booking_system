@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import BookingSuccessModal from '../components/BookingSuccessModal.jsx'
 import SessionCalendar from '../components/SessionCalendar.jsx'
+import StudentTodayBoard from '../components/StudentTodayBoard.jsx'
 
 const TIME_BUCKETS = {
   morning: { label: 'Morning (before noon)', match: (hour) => hour < 12 },
@@ -21,8 +22,10 @@ export default function StudentSessionsPage() {
     time: '',
   })
   const [loading, setLoading] = useState(true)
+  const [todayKey, setTodayKey] = useState(0)
 
   const load = () => {
+    setTodayKey((k) => k + 1)
     setLoading(true)
     Promise.all([
       apiFetch('/api/sessions/open/'),
@@ -57,11 +60,11 @@ export default function StudentSessionsPage() {
 
   const hasActiveFilters = Boolean(filters.time)
 
-  const book = async (sessionId) => {
+  const book = async (sessionId, sessionRow = null) => {
     setError('')
     setBookingSuccess(null)
     setBooking(true)
-    const session = sessions.find((row) => row.id === sessionId)
+    const session = sessionRow || sessions.find((row) => row.id === sessionId)
     try {
       const result = await apiFetch('/api/bookings/create/', {
         method: 'POST',
@@ -106,6 +109,11 @@ export default function StudentSessionsPage() {
           onClose={() => setBookingSuccess(null)}
         />
       )}
+      <StudentTodayBoard
+        onBook={(id, row) => book(id, row)}
+        booking={booking}
+        refreshKey={todayKey}
+      />
       {!error && sessions.length > 0 && (
         <div className="card session-filters">
           <div className="row">

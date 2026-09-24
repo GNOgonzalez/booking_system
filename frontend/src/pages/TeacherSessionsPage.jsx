@@ -3,6 +3,7 @@ import { apiFetch } from '../api.js'
 import { useTeacherScope } from '../hooks/useTeacherScope.js'
 import { useTeacherPermissions } from '../hooks/useTeacherPermissions.js'
 import SessionCalendar from '../components/SessionCalendar.jsx'
+import TeacherBranchPanel from '../components/TeacherBranchPanel.jsx'
 
 export default function TeacherSessionsPage() {
   const { isStaff, paths } = useTeacherScope()
@@ -31,6 +32,13 @@ export default function TeacherSessionsPage() {
         <p className="page-intro">Your teaching schedule. Filter by student or class, or switch to list view.</p>
       )}
       {error && <div className="error">{error}</div>}
+      {!isStaff && (
+        <TeacherBranchPanel
+          canManage={can('manage_schedule')}
+          onSessionPlaced={(session) => setSessions((rows) => [...rows, session])}
+          onSessionChanged={refreshSession}
+        />
+      )}
       {!error && (
         <SessionCalendar
           sessions={sessions}

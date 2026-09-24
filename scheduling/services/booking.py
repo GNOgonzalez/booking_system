@@ -40,7 +40,12 @@ def booking_block_reason(user, session):
         return f'Not enough tickets (this session costs {cost}).'
     if session.status != 'open':
         return 'This session is not open for booking.'
-    if session.start_time <= timezone.now():
+    now = timezone.now()
+    if session.accepts_walk_ins and session.branch_id:
+        # Walk-in classes take drop-ins until they finish; a seat and a ticket still apply.
+        if session.end_time <= now:
+            return 'This class has already finished.'
+    elif session.start_time <= now:
         return 'This session has already started.'
     if session.bookings.filter(status='confirmed').count() >= session.capacity:
         return 'This session is full.'

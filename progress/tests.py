@@ -10,7 +10,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from progress.homework_services import create_homework_assignment
-from progress.models import ProgressReport
+from progress.models import ProgressReport, SessionFeedback
 from scheduling.models import Booking, ClassOffering, ClassTopic, Session
 from scheduling.services.teacher_permissions import (
     ensure_default_permissions,
@@ -268,3 +268,182 @@ class TeacherWriteReportsPermissionTests(TestCase):
             HTTP_AUTHORIZATION=f'Bearer {self._token(self.teacher)}',
         )
         self.assertEqual(res.status_code, 403)
+
+
+class TeacherHomeQueueTests(TestCase):
+    """The teacher home lists lessons just taught and the reports still owed."""
+
+    def setUp(self):
+        Group.objects.create(name='student')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='staff')
+        self.teacher = User.objects.create_user('queue_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.other_teacher = User.objects.create_user('queue_other', password='pass')
+        self.other_teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('queue_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.staff = User.objects.create_user('queue_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+
+        self.past_session = self._session(self.teacher, 'Finished lesson', days_ago=2)
+        Booking.objects.create(session=self.past_session, student=self.student, status='confirmed')
+
+    def _session(self, teacher, title, *, days_ago=None, days_ahead=None):
+        if days_ago is not None:
+            start = timezone.now() - timedelta(days=days_ago)
+        else:
+            start = timezone.now() + timedelta(days=days_ahead)
+        return Session.objects.create(
+            teacher=teacher,
+            title=title,
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            capacity=2,
+            status='open',
+        )
+
+    def _token(self, user):
+        return self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+
+    def _home(self, user=None):
+        user = user or self.teacher
+        res = self.client.get(
+            '/api/teacher/home/',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(user)}',
+        )
+        self.assertEqual(res.status_code, 200)
+        return res.json()
+
+    def test_past_lesson_without_feedback_is_in_the_queue(self):
+        data = self._home()
+        self.assertEqual(data['missing_reports_total'], 1)
+        row = data['missing_reports'][0]
+        self.assertEqual(row['student_name'], 'queue_student')
+        self.assertEqual(row['session']['id'], self.past_session.id)
+        self.assertEqual(data['recent_sessions'][0]['reported_count'], 0)
+
+    def test_writing_feedback_clears_the_queue(self):
+        SessionFeedback.objects.create(
+            teacher=self.teacher,
+            student=self.student,
+            session=self.past_session,
+        )
+        data = self._home()
+        self.assertEqual(data['missing_reports'], [])
+        self.assertEqual(data['recent_sessions'][0]['reported_count'], 1)
+
+    def test_upcoming_lessons_are_not_owed_a_report(self):
+        upcoming = self._session(self.teacher, 'Next week', days_ahead=5)
+        Booking.objects.create(session=upcoming, student=self.student, status='confirmed')
+        data = self._home()
+        self.assertEqual(data['missing_reports_total'], 1)
+        session_ids = [row['session']['id'] for row in data['missing_reports']]
+        self.assertNotIn(upcoming.id, session_ids)
+
+    def test_cancelled_bookings_and_sessions_are_skipped(self):
+        cancelled_session = self._session(self.teacher, 'Called off', days_ago=1)
+        cancelled_session.status = 'cancelled'
+        cancelled_session.save(update_fields=['status'])
+        Booking.objects.create(
+            session=cancelled_session,
+            student=self.student,
+            status='confirmed',
+        )
+        dropped = self._session(self.teacher, 'Student dropped', days_ago=1)
+        Booking.objects.create(session=dropped, student=self.student, status='cancelled')
+
+        data = self._home()
+        self.assertEqual(data['missing_reports_total'], 1)
+        self.assertEqual(data['missing_reports'][0]['session']['id'], self.past_session.id)
+
+    def test_another_teachers_lesson_is_not_listed(self):
+        theirs = self._session(self.other_teacher, 'Not mine', days_ago=1)
+        Booking.objects.create(session=theirs, student=self.student, status='confirmed')
+        data = self._home()
+        session_ids = [row['session']['id'] for row in data['missing_reports']]
+        self.assertNotIn(theirs.id, session_ids)
+
+    def test_staff_can_read_a_teachers_queue(self):
+        res = self.client.get(
+            f'/api/staff/teachers/{self.teacher.id}/home/',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(self.staff)}',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['missing_reports_total'], 1)
+
+    def test_student_cannot_read_the_teacher_queue(self):
+        res = self.client.get(
+            '/api/teacher/home/',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(self.student)}',
+        )
+        self.assertEqual(res.status_code, 403)
+
+
+class StaffStudioFeedbackListTests(TestCase):
+    """Staff can browse completed reports across every teacher."""
+
+    def setUp(self):
+        Group.objects.create(name='student')
+        Group.objects.create(name='teacher')
+        Group.objects.create(name='staff')
+        self.teacher = User.objects.create_user('studio_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.other_teacher = User.objects.create_user('studio_teacher_2', password='pass')
+        self.other_teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('studio_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.staff = User.objects.create_user('studio_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+
+        SessionFeedback.objects.create(
+            teacher=self.teacher,
+            student=self.student,
+            class_notes='Great pronunciation work.',
+        )
+        SessionFeedback.objects.create(
+            teacher=self.other_teacher,
+            student=self.student,
+            class_notes='Needs more reading practice.',
+        )
+
+    def _token(self, user):
+        return self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+
+    def test_staff_sees_every_teachers_reports(self):
+        res = self.client.get(
+            '/api/progress/staff/feedback/',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(self.staff)}',
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['total'], 2)
+        self.assertEqual(
+            {row['teacher_name'] for row in data['reports']},
+            {'studio_teacher', 'studio_teacher_2'},
+        )
+
+    def test_teacher_filter_narrows_the_list(self):
+        res = self.client.get(
+            f'/api/progress/staff/feedback/?teacher_id={self.teacher.id}',
+            HTTP_AUTHORIZATION=f'Bearer {self._token(self.staff)}',
+        )
+        data = res.json()
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['reports'][0]['notes_excerpt'], 'Great pronunciation work.')
+
+    def test_teachers_and_students_are_refused(self):
+        for user in (self.teacher, self.student):
+            res = self.client.get(
+                '/api/progress/staff/feedback/',
+                HTTP_AUTHORIZATION=f'Bearer {self._token(user)}',
+            )
+            self.assertEqual(res.status_code, 403)

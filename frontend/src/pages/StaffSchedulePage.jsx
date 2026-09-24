@@ -38,6 +38,7 @@ export default function StaffSchedulePage() {
       <h1>Studio schedule</h1>
       <p className="page-intro">
         All teachers on one calendar. Filter by teacher, student, or class, switch to list view, or click a session for details.
+        In-person classes live under <Link to="/staff/branches">Branches &amp; hours</Link>, where you set opening times and place teachers.
       </p>
       {error && <div className="error">{error}</div>}
       {!error && (

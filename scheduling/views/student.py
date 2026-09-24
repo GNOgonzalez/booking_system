@@ -105,7 +105,7 @@ def membership_page(request):
         'scheduling/membership.html',
         {
             'membership': active_membership_for(request.user),
-            'plans': get_available_plans(),
+            'plans': get_available_plans(request.user),
         },
     )
 

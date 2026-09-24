@@ -12,6 +12,7 @@ export default function CurriculumPage() {
   const [me, setMe] = useState(null)
   const [enrollment, setEnrollment] = useState(undefined)
   const [templates, setTemplates] = useState([])
+  const [supplementary, setSupplementary] = useState([])
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -24,9 +25,11 @@ export default function CurriculumPage() {
         return Promise.all([
           apiFetch('/api/curriculum/me/'),
           apiFetch('/api/curriculum/templates/'),
-        ]).then(([mine, templateRows]) => {
+          apiFetch('/api/curriculum/me/supplementary/'),
+        ]).then(([mine, templateRows, extraRows]) => {
           setEnrollment(mine.enrollment)
           setTemplates(templateRows)
+          setSupplementary(extraRows)
         })
       })
       .catch((err) => setError(err.message))
@@ -81,12 +84,31 @@ export default function CurriculumPage() {
               key={module.id}
               className={`card${module.is_current ? ' curriculum-module--current' : ''}`}
             >
-              <div className="card-title">{module.title}</div>
+              <div className="card-title">
+                {module.cefr_level && <><span className="badge">{module.cefr_level}</span> </>}
+                {module.title}
+              </div>
               <div className="card-meta">
                 {statusLabel(module.status)}
                 {module.is_current ? ' · Current' : ''}
               </div>
               {module.content && <p>{module.content}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {supplementary.length > 0 && (
+        <div className="card">
+          <div className="card-title">Extra practice from your teacher</div>
+          <p className="card-meta">Added alongside your main path to strengthen specific skills.</p>
+          {supplementary.map((item) => (
+            <div key={item.id} className="card">
+              <div className="card-title">
+                {item.module?.cefr_level && <><span className="badge">{item.module.cefr_level}</span> </>}
+                {item.title}
+              </div>
+              {item.content && <p>{item.content}</p>}
             </div>
           ))}
         </div>

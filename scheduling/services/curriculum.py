@@ -38,6 +38,22 @@ def get_active_enrollment(student):
     )
 
 
+def _clean_cefr_level(value):
+    level = (value or '').strip().upper()
+    return level if level in CurriculumModule.CEFR_LEVELS else ''
+
+
+def _clean_skill_keys(value):
+    if not isinstance(value, (list, tuple)):
+        return []
+    keys = []
+    for key in value:
+        key = str(key or '').strip().lower()
+        if key and key not in keys:
+            keys.append(key[:50])
+    return keys
+
+
 def _replace_modules(track, modules_data):
     track.modules.all().delete()
     created = []
@@ -51,12 +67,29 @@ def _replace_modules(track, modules_data):
                 title=title[:200],
                 content=(row.get('content') or '').strip(),
                 sort_order=row.get('sort_order', index),
+                cefr_level=_clean_cefr_level(row.get('cefr_level')),
+                skill_keys=_clean_skill_keys(row.get('skill_keys')),
             ),
         )
     return created
 
 
-def create_track(*, title, description='', is_template=False, is_active=True, created_by=None, modules=None):
+def _clean_framework(value):
+    return value if value in dict(CurriculumTrack.FRAMEWORK_CHOICES) else CurriculumTrack.FRAMEWORK_CUSTOM
+
+
+def create_track(
+    *,
+    title,
+    description='',
+    is_template=False,
+    is_active=True,
+    created_by=None,
+    modules=None,
+    framework=CurriculumTrack.FRAMEWORK_CUSTOM,
+    subject='',
+    cefr_band='',
+):
     title = (title or '').strip()
     if not title:
         return None, 'Title is required.'
@@ -66,13 +99,27 @@ def create_track(*, title, description='', is_template=False, is_active=True, cr
         is_template=bool(is_template),
         is_active=bool(is_active),
         created_by=created_by,
+        framework=_clean_framework(framework),
+        subject=(subject or '').strip()[:100],
+        cefr_band=_clean_cefr_level(cefr_band),
     )
     _replace_modules(track, modules)
     track = get_track(track.id)
     return track, None
 
 
-def update_track(track, *, title=None, description=None, is_template=None, is_active=None, modules=None):
+def update_track(
+    track,
+    *,
+    title=None,
+    description=None,
+    is_template=None,
+    is_active=None,
+    modules=None,
+    framework=None,
+    subject=None,
+    cefr_band=None,
+):
     if title is not None:
         title = title.strip()
         if not title:
@@ -84,6 +131,12 @@ def update_track(track, *, title=None, description=None, is_template=None, is_ac
         track.is_template = bool(is_template)
     if is_active is not None:
         track.is_active = bool(is_active)
+    if framework is not None:
+        track.framework = _clean_framework(framework)
+    if subject is not None:
+        track.subject = subject.strip()[:100]
+    if cefr_band is not None:
+        track.cefr_band = _clean_cefr_level(cefr_band)
     track.save()
     if modules is not None:
         _replace_modules(track, modules)
@@ -142,10 +195,7 @@ def serialize_enrollment(enrollment, student=None):
     for module in track.modules.all():
         status = statuses.get(module.id, StudentModuleProgress.STATUS_PENDING)
         modules.append({
-            'id': module.id,
-            'title': module.title,
-            'content': module.content,
-            'sort_order': module.sort_order,
+            **_module_fields(module),
             'status': status,
         })
         if current_id is None and status == StudentModuleProgress.STATUS_PENDING:
@@ -156,35 +206,43 @@ def serialize_enrollment(enrollment, student=None):
         'id': enrollment.id,
         'started_at': enrollment.started_at.isoformat(),
         'track': {
-            'id': track.id,
-            'title': track.title,
-            'description': track.description,
-            'is_template': track.is_template,
-            'is_active': track.is_active,
+            **_track_fields(track),
             'modules': modules,
         },
     }
 
 
-def serialize_track(track, *, include_modules=True):
-    data = {
+def _module_fields(module):
+    return {
+        'id': module.id,
+        'title': module.title,
+        'content': module.content,
+        'sort_order': module.sort_order,
+        'cefr_level': module.cefr_level,
+        'skill_keys': module.skill_keys or [],
+    }
+
+
+def _track_fields(track):
+    return {
         'id': track.id,
         'title': track.title,
         'description': track.description,
         'is_template': track.is_template,
         'is_active': track.is_active,
+        'framework': track.framework,
+        'subject': track.subject,
+        'cefr_band': track.cefr_band,
+    }
+
+
+def serialize_track(track, *, include_modules=True):
+    data = {
+        **_track_fields(track),
         'module_count': track.modules.count() if not include_modules else len(track.modules.all()),
     }
     if include_modules:
-        data['modules'] = [
-            {
-                'id': module.id,
-                'title': module.title,
-                'content': module.content,
-                'sort_order': module.sort_order,
-            }
-            for module in track.modules.all()
-        ]
+        data['modules'] = [_module_fields(module) for module in track.modules.all()]
     return data
 
 

@@ -44,6 +44,7 @@ python manage.py bootstrap_sandbox            # groups only
 python manage.py bootstrap_sandbox --demo     # demo users (demo1234)
 python manage.py bootstrap_sandbox --demo --showcase  # portfolio demo seed
 python manage.py bootstrap_sandbox --demo --staff-superuser  # + /admin/ for demo_staff (local only)
+python manage.py seed_cefr_curriculum  # CEFR A1–C2 English template (idempotent; --refresh resets progress)
 python manage.py purge_expired_homework       # delete homework files past 7 days
 
 python manage.py runserver                    # :8000
@@ -79,13 +80,13 @@ React      ──┘         ▲
 ## Key paths
 
 ```text
-config/settings.py            env-driven; DRF, CORS, JWT, MEDIA, integrations
+config/settings.py            env-driven; DRF, CORS, JWT, MEDIA, integrations; `TIME_ZONE` = studio zone (branch hours)
 config/urls.py                root routes + api/ + progress/ + media (DEBUG)
-scheduling/models.py          Session, Booking, ClassOffering, TeacherPermission, StudioGlossary, StaffActionLog, …
+scheduling/models.py          Session, Booking, ClassOffering, Branch, BranchHours, TeacherPermission, StudioGlossary, StaffActionLog, …
                               (`ClassType` is legacy — use `ClassOffering` for new work)
-scheduling/services/          booking, membership, membership_admin, availability, classes, users,
+scheduling/services/          booking, membership, membership_admin, availability, branches, classes, users,
                               glossary, staff, staff_audit, teacher_permissions
-scheduling/api/               DRF views, staff_views, glossary_views, serializers, permissions
+scheduling/api/               DRF views, staff_views, branch_views, glossary_views, serializers, permissions
 scheduling/views/             HTML views (package)
 progress/models.py            SessionFeedback, ScoreDimension, HomeworkAssignment, HomeworkEntry
 progress/services.py          metrics, feedback, student_dashboard
@@ -97,6 +98,7 @@ docs/architecture-and-roadmap.md
 docs/operations-guide.md
 docs/learn-the-app.md         Plain-English tour; CS50-aligned study path
 docs/glossary.md
+docs/adaptive-curriculum.md  CEFR path, suggestion rules, AI layer
 ```
 
 ---
@@ -118,6 +120,7 @@ docs/glossary.md
 |--------|------|------|
 | GET | `student/home/` | student |
 | GET | `sessions/open/` | student |
+| GET | `sessions/today/?date=&branch=` (in-branch classes still joinable; walk-ins listed until `end_time`) | student |
 | GET/POST | `bookings/`, `bookings/create/` | student |
 | POST | `bookings/<id>/cancel/` | student |
 | GET/POST | `membership/` | student |
@@ -133,6 +136,11 @@ docs/glossary.md
 | GET/POST | `teacher/availability/` | teacher (+ `manage_availability`) |
 | PATCH/DELETE | `teacher/availability/<id>/` | teacher |
 | GET | `teacher/permissions/` | teacher |
+| GET | `teacher/home/` (recent lessons + reports still owed) | teacher |
+| GET | `teacher/branches/` (active branches + own offerings) | teacher/staff |
+| GET | `teacher/branches/<id>/day/?date=` (hours, placed classes, open windows) | teacher/staff |
+| POST | `teacher/branches/<id>/classes/` (place own class inside hours) | teacher (+ `manage_schedule`) |
+| POST | `teacher/sessions/<id>/walk-ins/` (`{accepts_walk_ins}`; owner or staff; branch classes only) | teacher/staff |
 
 ### Staff (`scheduling`)
 
@@ -143,7 +151,14 @@ docs/glossary.md
 | GET | `staff/schedule/` | staff |
 | POST | `staff/teachers/<id>/password/`, `staff/students/<id>/password/` | staff |
 | GET/POST | `staff/students/<id>/membership/` (comp or record a sale) | staff |
+| POST | `staff/students/<id>/membership/special/` (private plan for one student; `student_can_renew` lets them rebuy it) | staff |
 | PATCH | `staff/students/<id>/membership/<mid>/` (tickets, expiry, cancel) | staff |
+| GET | `staff/teachers/<id>/home/` | staff |
+| GET/POST | `staff/branches/` (branch + weekly hours in studio `TIME_ZONE`) | staff |
+| GET/PATCH | `staff/branches/<id>/` (name, `is_active`, replace `hours`) | staff |
+| GET | `staff/branches/<id>/day/?date=` | staff |
+| POST | `staff/branches/<id>/classes/` (place a teacher's class; `accepts_walk_ins`) | staff |
+| GET | `staff/branches/teacher-options/` (teachers + offerings + topics) | staff |
 | POST | `staff/bookings/<id>/cancel/` (with refund choice) | staff |
 | GET | `staff/payments/` (mode + Stripe status; no secrets) | staff |
 | GET | `staff/integrations/` (email + Google status; no secrets) | staff |
@@ -161,7 +176,12 @@ docs/glossary.md
 | POST | `teacher/curriculum/tracks/` | teacher (+ `manage_curriculum`) |
 | POST | `teacher/curriculum/students/<id>/enroll/` | teacher (+ `manage_curriculum`) |
 | POST | `teacher/curriculum/modules/<id>/progress/` | teacher (+ `manage_curriculum`) |
+| GET | `teacher/curriculum/students/<id>/suggestions/` (pending + recent + signals) | teacher |
+| POST | `teacher/curriculum/students/<id>/suggest/` (adaptive; rules + optional AI) | teacher (+ `manage_curriculum`) |
+| POST | `teacher/curriculum/suggestions/<id>/accept/`, `…/dismiss/` | teacher (+ `manage_curriculum`) |
+| GET | `teacher/curriculum/students/<id>/summary/?days=30` | teacher |
 | GET/POST | `curriculum/me/` | student |
+| GET | `curriculum/me/supplementary/` (accepted extra practice) | student |
 | GET | `curriculum/templates/` | authenticated |
 | GET/PATCH | `staff/llm/` | staff |
 | POST | `staff/llm/test/` | staff |
@@ -188,6 +208,7 @@ docs/glossary.md
 | PATCH/DELETE | `feedback/teacher/<id>/` | teacher |
 | GET/POST | `homework/teacher/` | teacher (+ `assign_homework`) |
 | GET | `score-dimensions/` | authenticated |
+| GET | `staff/feedback/` (studio-wide completed reports) | staff |
 | Staff metrics | `staff/score-dimensions/…` | staff |
 | Staff per-teacher | `staff/teachers/<id>/feedback|homework/…` | staff |
 
