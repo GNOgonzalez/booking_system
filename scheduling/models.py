@@ -338,6 +338,42 @@ class StudioLLMConfig(models.Model):
         return f'LLM ({self.provider}, {status})'
 
 
+class StudioCheckInConfig(models.Model):
+    """Staff-chosen check-in window and reminder lead, in hours before start."""
+
+    check_in_opens_hours_before = models.PositiveIntegerField(
+        default=24,
+        help_text='Students and the teacher may check in this many hours before the lesson starts.',
+    )
+    reminder_hours_before = models.PositiveIntegerField(
+        default=3,
+        help_text='If someone has not checked in, send a reminder this many hours before start.',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'studio check-in config'
+        verbose_name_plural = 'studio check-in config'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return (
+            f'Check-in {self.check_in_opens_hours_before}h before · '
+            f'reminder {self.reminder_hours_before}h before'
+        )
+
+
 class Session(models.Model):
     MEETING_PROVIDER_CHOICES = [
         ('none', 'No video link'),
@@ -455,6 +491,43 @@ class Booking(models.Model):
 
     def __str__(self):
         return f"{self.student.username} - {self.session.title} - {self.status}"
+
+
+class SessionCheckIn(models.Model):
+    """One row per person expected at a lesson: teacher or confirmed student."""
+
+    ROLE_TEACHER = 'teacher'
+    ROLE_STUDENT = 'student'
+    ROLE_CHOICES = [
+        (ROLE_TEACHER, 'Teacher'),
+        (ROLE_STUDENT, 'Student'),
+    ]
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name='check_ins',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='session_check_ins',
+    )
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    checked_in_at = models.DateTimeField(null=True, blank=True)
+    reminder_sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session', 'user'],
+                name='unique_checkin_per_user_session',
+            ),
+        ]
+
+    def __str__(self):
+        state = 'in' if self.checked_in_at else 'pending'
+        return f'{self.user} @ {self.session_id} ({state})'
 
 
 class ClassRequest(models.Model):

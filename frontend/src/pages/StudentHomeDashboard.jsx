@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { apiFetch } from '../api.js'
+import HomeCheckInList from '../components/HomeCheckInList.jsx'
 import { useGlossary } from '../hooks/useGlossary.jsx'
 
 function formatTimeLeft(validUntil) {
@@ -113,6 +114,24 @@ export default function StudentHomeDashboard() {
           </NavLink>
         </div>
       )}
+
+      <HomeCheckInList
+        items={homeData?.check_ins || []}
+        onCheckedIn={(sessionId, checkIn) => {
+          setHomeData((current) => {
+            if (!current) return current
+            return {
+              ...current,
+              check_ins: (current.check_ins || []).map((row) => (
+                row.session_id === sessionId ? { ...row, check_in: checkIn } : row
+              )),
+              next_lesson: current.next_lesson?.session_id === sessionId
+                ? { ...current.next_lesson, check_in: checkIn }
+                : current.next_lesson,
+            }
+          })
+        }}
+      />
 
       <div className="stat-grid">
         <div className="stat">

@@ -19,10 +19,11 @@ from scheduling.models import (
     Session,
     SpecialAvailability,
 )
+from scheduling.services.checkin import check_in_payload, list_check_ins
 from scheduling.services.classes import apply_track_to_offering, sync_class_topics
 from scheduling.services.llm import ai_available_for_user
 from scheduling.services.sessions import module_belongs_to_offering, session_display_title
-from scheduling.services.teacher_permissions import permissions_for_teacher
+from scheduling.services.teacher_permissions import permissions_for_teacher, user_is_staff
 
 User = get_user_model()
 
@@ -53,6 +54,8 @@ class SessionSerializer(serializers.ModelSerializer):
     ticket_cost = serializers.SerializerMethodField()
     student_booked = serializers.SerializerMethodField()
     students = serializers.SerializerMethodField()
+    check_in = serializers.SerializerMethodField()
+    check_ins = serializers.SerializerMethodField()
     branch_name = serializers.CharField(source='branch.name', read_only=True, default=None)
 
     class Meta:
@@ -85,10 +88,12 @@ class SessionSerializer(serializers.ModelSerializer):
             'ticket_cost',
             'student_booked',
             'students',
+            'check_in',
+            'check_ins',
         ]
         read_only_fields = [
             'status', 'meeting_url', 'title', 'teacher', 'meeting_provider_display',
-            'branch', 'branch_name', 'curriculum_module',
+            'branch', 'branch_name', 'curriculum_module', 'check_in', 'check_ins',
         ]
 
     def get_class_topic(self, obj):
@@ -119,10 +124,33 @@ class SessionSerializer(serializers.ModelSerializer):
         bookings = getattr(obj, 'confirmed_bookings', None)
         if bookings is None:
             bookings = obj.bookings.filter(status='confirmed').select_related('student')
+        checked = {row['user_id'] for row in list_check_ins(obj)}
         return [
-            {'id': booking.student_id, 'username': booking.student.username}
+            {
+                'id': booking.student_id,
+                'username': booking.student.username,
+                'checked_in': booking.student_id in checked,
+            }
             for booking in bookings
         ]
+
+    def _request_user(self):
+        request = self.context.get('request')
+        return getattr(request, 'user', None)
+
+    def get_check_in(self, obj):
+        user = self._request_user()
+        if user is None or not user.is_authenticated:
+            return None
+        return check_in_payload(obj, user)
+
+    def get_check_ins(self, obj):
+        user = self._request_user()
+        if user is None or not user.is_authenticated:
+            return []
+        if obj.teacher_id != user.id and not user_is_staff(user):
+            return []
+        return list_check_ins(obj)
 
     def _catalog_teacher(self):
         return self.context.get('acting_teacher') or self.context['request'].user
@@ -184,6 +212,7 @@ class BookingSerializer(serializers.ModelSerializer):
     class_focus = serializers.CharField(source='session.class_offering.focus', read_only=True, default=None)
     class_topic = serializers.SerializerMethodField()
     no_ticket_refund = serializers.SerializerMethodField()
+    check_in = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -206,8 +235,9 @@ class BookingSerializer(serializers.ModelSerializer):
             'class_topic',
             'status',
             'created_at',
+            'check_in',
         ]
-        read_only_fields = ['status', 'created_at']
+        read_only_fields = ['status', 'created_at', 'check_in']
 
     def get_class_topic(self, obj):
         session = obj.session
@@ -217,6 +247,13 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def get_no_ticket_refund(self, obj):
         return obj.class_request_id is not None
+
+    def get_check_in(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if obj.session_id is None or user is None or not user.is_authenticated:
+            return None
+        return check_in_payload(obj.session, user)
 
 
 class ClassRequestSerializer(serializers.ModelSerializer):

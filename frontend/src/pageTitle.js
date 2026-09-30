@@ -13,6 +13,7 @@ const TITLES = [
   ['/staff/activity', 'Staff activity'],
   ['/staff/reports', 'Reports'],
   ['/staff/metrics', 'Metrics'],
+  ['/staff/check-in', 'Check-in'],
   ['/staff/glossary', 'Glossary'],
   ['/staff/branding', 'Branding'],
   ['/staff/ai', 'AI settings'],

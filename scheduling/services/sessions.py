@@ -2,7 +2,7 @@
 
 from django.db.models import Count, Prefetch, Q
 
-from scheduling.models import Booking, ClassOffering, ClassTopic, CurriculumModule
+from scheduling.models import Booking, ClassOffering, ClassTopic, CurriculumModule, SessionCheckIn
 
 
 def visible_open_sessions(queryset, student):
@@ -32,6 +32,7 @@ def sessions_for_list(queryset):
             'teacher', 'class_offering', 'class_offering__track', 'class_topic', 'curriculum_module', 'branch',
         ).prefetch_related(
             Prefetch('bookings', queryset=confirmed, to_attr='confirmed_bookings'),
+            Prefetch('check_ins', queryset=SessionCheckIn.objects.select_related('user')),
         ),
     )
 

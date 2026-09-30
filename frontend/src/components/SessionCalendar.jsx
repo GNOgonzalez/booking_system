@@ -484,6 +484,12 @@ export default function SessionCalendar({
           session={activeSession}
           onClose={() => setActiveSession(null)}
           onCancel={onCancelBooking}
+          onCheckedIn={(updated) => {
+            setActiveSession((current) => (
+              current ? { ...current, check_in: updated.check_in } : current
+            ))
+            onSessionChanged?.(updated)
+          }}
           cancelling={cancelling}
         />
       ) : (

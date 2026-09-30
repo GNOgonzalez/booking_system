@@ -118,6 +118,7 @@ class MyBookingListView(generics.ListAPIView):
         return (
             Booking.objects.filter(student=self.request.user, status='confirmed')
             .select_related('session', 'session__teacher', 'session__class_offering', 'session__class_topic')
+            .prefetch_related('session__check_ins')
         )
 
 
@@ -267,6 +268,9 @@ class TeacherSessionStudentsView(APIView):
             status='confirmed',
         ).select_related('student').order_by('student__username')
 
+        checked_ids = set(
+            session.check_ins.filter(checked_in_at__isnull=False).values_list('user_id', flat=True)
+        )
         students = []
         seen = set()
         for booking in bookings:
@@ -279,7 +283,12 @@ class TeacherSessionStudentsView(APIView):
                 label = f"{profile.display_name} ({user.username})"
             else:
                 label = user.username
-            students.append({'id': user.id, 'username': user.username, 'label': label})
+            students.append({
+                'id': user.id,
+                'username': user.username,
+                'label': label,
+                'checked_in': user.id in checked_ids,
+            })
         return Response(students)
 
 

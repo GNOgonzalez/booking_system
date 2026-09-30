@@ -344,6 +344,8 @@ class TeacherHomeQueueTests(TestCase):
         self.assertEqual(data['missing_reports_total'], 1)
         session_ids = [row['session']['id'] for row in data['missing_reports']]
         self.assertNotIn(upcoming.id, session_ids)
+        self.assertEqual(data['check_ins'][0]['session_id'], upcoming.id)
+        self.assertIn('check_in', data['check_ins'][0])
 
     def test_cancelled_bookings_and_sessions_are_skipped(self):
         cancelled_session = self._session(self.teacher, 'Called off', days_ago=1)

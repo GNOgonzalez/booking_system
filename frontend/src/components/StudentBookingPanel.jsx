@@ -1,3 +1,5 @@
+import CheckInButton from './CheckInButton.jsx'
+
 function formatDateTime(iso) {
   return new Date(iso).toLocaleString(undefined, {
     weekday: 'long',
@@ -21,6 +23,7 @@ export default function StudentBookingPanel({
   session,
   onClose,
   onCancel,
+  onCheckedIn,
   cancelling = false,
 }) {
   if (!session) {
@@ -103,6 +106,12 @@ export default function StudentBookingPanel({
           </div>
         )}
       </dl>
+
+      <CheckInButton
+        sessionId={session.id}
+        checkIn={session.check_in}
+        onCheckedIn={onCheckedIn}
+      />
 
       {canCancel && (
         <div className="form-actions">

@@ -8,6 +8,7 @@ import {
 } from '../utils/datetime.js'
 import { useScoreDimensions, scoreValue } from '../hooks/useScoreDimensions.js'
 import SessionReportForm from './SessionReportForm.jsx'
+import CheckInButton from './CheckInButton.jsx'
 
 function formatDuration(startIso, endIso) {
   const mins = Math.round((new Date(endIso) - new Date(startIso)) / 60000)
@@ -157,6 +158,19 @@ export default function SessionDetailPanel({
       {error && <div className="error">{error}</div>}
       {message && <div className="success">{message}</div>}
 
+      <CheckInButton
+        sessionId={session.id}
+        checkIn={session.check_in}
+        onCheckedIn={(updated) => {
+          const checked = new Set((updated.check_ins || []).map((row) => row.user_id))
+          setStudents((rows) => rows.map((student) => ({
+            ...student,
+            checked_in: checked.has(student.id),
+          })))
+          onSessionChanged?.(updated)
+        }}
+      />
+
       {showTeacherLink && apiPaths?.staffTeacherSessions && (
         <p className="card-meta" style={{ marginBottom: '0.75rem' }}>
           <Link to={apiPaths.staffTeacherSessions}>Open this teacher&apos;s schedule →</Link>
@@ -281,7 +295,10 @@ export default function SessionDetailPanel({
         ) : students.length ? (
           <ul className="session-student-list">
             {students.map((student) => (
-              <li key={student.id}>{student.label}</li>
+              <li key={student.id}>
+                {student.label || student.username}
+                {student.checked_in ? <span className="badge">Checked in</span> : null}
+              </li>
             ))}
           </ul>
         ) : (

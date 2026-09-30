@@ -1,6 +1,7 @@
 """Email notifications. Uses console backend in dev, SMTP in prod (see settings)."""
 
 import logging
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import send_mail
@@ -150,6 +151,22 @@ def send_booking_cancellation(booking):
         f'Your booking for "{session.title}" on {session.start_time} was cancelled.'
     )
     return _safe_send(f'Booking cancelled: {session.title}', body, booking.student.email)
+
+
+def send_checkin_reminder(user, session, *, role, config):
+    """Nudge a teacher or student who has not checked in yet."""
+    who = 'teaching' if role == 'teacher' else 'attending'
+    opens_at = session.start_time - timedelta(hours=config.check_in_opens_hours_before)
+    body = (
+        f"Hi {user.username},\n\n"
+        f'Please check in for "{session.title}" ({who}).\n'
+        f"Starts: {session.start_time}\n"
+        f"Check-in opened at {opens_at}. Open the studio app and tap Check in "
+        f"so we know you are coming.\n"
+    )
+    if session.meeting_url:
+        body += f"Join link: {session.meeting_url}\n"
+    return _safe_send(f'Check-in reminder: {session.title}', body, user.email)
 
 
 def send_membership_receipt(membership):

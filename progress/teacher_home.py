@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from progress.models import SessionFeedback
 from scheduling.models import Booking, Session
+from scheduling.services.checkin import check_in_payload, home_check_ins_for_teacher
 
 RECENT_DAYS = 14
 RECENT_LIMIT = 15
@@ -109,10 +110,25 @@ def teacher_home(teacher):
 
     missing_rows.sort(key=lambda row: row['session']['end_time'], reverse=True)
 
+    next_session = (
+        Session.objects.filter(teacher=teacher, status='open', end_time__gte=now)
+        .select_related('class_offering')
+        .order_by('start_time')
+        .first()
+    )
+    next_row = None
+    if next_session is not None:
+        next_row = {
+            **_session_label(next_session),
+            'check_in': check_in_payload(next_session, teacher),
+        }
+
     return {
         'generated_at': now,
         'recent_days': RECENT_DAYS,
         'recent_sessions': recent_rows,
         'missing_reports': missing_rows[:MISSING_LIMIT],
         'missing_reports_total': len(missing_rows),
+        'next_session': next_row,
+        'check_ins': home_check_ins_for_teacher(teacher),
     }

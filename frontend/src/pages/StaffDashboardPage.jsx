@@ -247,6 +247,14 @@ export default function StaffDashboardPage() {
       </div>
 
       <div className="card">
+        <div className="card-title">Lesson check-in</div>
+        <p className="card-meta">
+          When teachers and students can check in, and when a reminder email goes out if they have not.
+        </p>
+        <Link to="/staff/check-in" className="btn secondary">Check-in settings</Link>
+      </div>
+
+      <div className="card">
         <div className="card-title">Integrations</div>
         <p className="card-meta">
           Whether emails are really being delivered and which teachers have connected Google.

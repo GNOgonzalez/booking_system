@@ -22,6 +22,7 @@ function bookingToSession(booking) {
     status: booking.status,
     tickets_spent: booking.tickets_spent,
     no_ticket_refund: booking.no_ticket_refund,
+    check_in: booking.check_in,
   }
 }
 
@@ -125,6 +126,13 @@ export default function StudentBookingsPage() {
           showNewSession={false}
           showWriteReport={false}
           onCancelBooking={tab === 'upcoming' ? cancel : undefined}
+          onSessionChanged={(updated) => {
+            setBookings((rows) => rows.map((booking) => (
+              booking.session === updated.id
+                ? { ...booking, check_in: updated.check_in }
+                : booking
+            )))
+          }}
           cancelling={cancelling}
         />
       ) : (

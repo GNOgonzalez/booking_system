@@ -43,6 +43,7 @@ const StaffTeacherStudentsPage = lazy(() => import('./pages/StaffTeacherStudents
 const InboxPage = lazy(() => import('./pages/InboxPage.jsx'))
 const CurriculumPage = lazy(() => import('./pages/CurriculumPage.jsx'))
 const StaffGlossaryPage = lazy(() => import('./pages/StaffGlossaryPage.jsx'))
+const StaffCheckInPage = lazy(() => import('./pages/StaffCheckInPage.jsx'))
 const StaffLLMSettingsPage = lazy(() => import('./pages/StaffLLMSettingsPage.jsx'))
 const StaffMembershipPlansPage = lazy(() => import('./pages/StaffMembershipPlansPage.jsx'))
 const StaffReportsPage = lazy(() => import('./pages/StaffReportsPage.jsx'))
@@ -157,6 +158,7 @@ function Sidebar({ me, onClose, collapsed, onToggleCollapse }) {
           <NavLink to="/staff/reports" className="nav-link">Reports</NavLink>
           <NavLink to="/staff/activity" className="nav-link">Staff activity</NavLink>
           <NavLink to="/staff/metrics" className="nav-link">{label('studio')} {labels('metric').toLowerCase()}</NavLink>
+          <NavLink to="/staff/check-in" className="nav-link">Check-in</NavLink>
           <NavLink to="/staff/glossary" className="nav-link">Glossary</NavLink>
           <NavLink to="/staff/branding" className="nav-link">Sign-in branding</NavLink>
           <NavLink to="/staff/ai" className="nav-link">AI settings</NavLink>
@@ -441,6 +443,7 @@ function AppRoutes() {
               <Route path="/staff/activity" element={<StaffActivityPage />} />
               <Route path="/staff/reports" element={<StaffReportsPage />} />
               <Route path="/staff/metrics" element={<StaffMetricsPage />} />
+              <Route path="/staff/check-in" element={<StaffCheckInPage />} />
               <Route path="/staff/glossary" element={<StaffGlossaryPage />} />
               <Route path="/staff/branding" element={<StaffBrandingPage />} />
               <Route path="/staff/ai" element={<StaffLLMSettingsPage />} />

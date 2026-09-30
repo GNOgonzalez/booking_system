@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { apiFetch } from '../api.js'
+import HomeCheckInList from '../components/HomeCheckInList.jsx'
 import { useGlossary } from '../hooks/useGlossary.jsx'
 
 function formatLessonTime(iso) {
@@ -40,6 +41,24 @@ export default function TeacherHomeDashboard({ canWriteReports = true }) {
 
   return (
     <>
+      <HomeCheckInList
+        items={data.check_ins || []}
+        onCheckedIn={(sessionId, checkIn) => {
+          setData((current) => {
+            if (!current) return current
+            return {
+              ...current,
+              check_ins: (current.check_ins || []).map((row) => (
+                row.session_id === sessionId ? { ...row, check_in: checkIn } : row
+              )),
+              next_session: current.next_session?.id === sessionId
+                ? { ...current.next_session, check_in: checkIn }
+                : current.next_session,
+            }
+          })
+        }}
+      />
+
       <div className={missing.length ? 'hero-card' : 'card'}>
         <div className={missing.length ? 'hero-body' : ''}>
         {missing.length > 0 && <div className="hero-eyebrow">Catch up</div>}

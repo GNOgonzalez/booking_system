@@ -2250,6 +2250,9 @@ class StudentHomeTests(TestCase):
         self.assertEqual(data['tickets_remaining'], 2)
         self.assertIsNotNone(data['next_lesson'])
         self.assertEqual(data['next_lesson']['session_title'], 'Next lesson')
+        self.assertEqual(len(data['check_ins']), 1)
+        self.assertEqual(data['check_ins'][0]['session_id'], self.session.id)
+        self.assertIn('check_in', data['check_ins'][0])
 
 
 class ShowcaseSeedTests(TestCase):
@@ -4445,3 +4448,91 @@ class CurriculumClassAndOpenSessionTests(TestCase):
         shown = self.client.get('/api/sessions/open/', **self._auth(self.student)).json()
         self.assertEqual(len(shown), 1)
         self.assertIsNone(booking_block_reason(self.student, Session.objects.get(class_offering=offering)))
+
+
+class CheckInTests(TestCase):
+    def setUp(self):
+        for name in ('student', 'teacher', 'staff'):
+            Group.objects.get_or_create(name=name)
+        self.teacher = User.objects.create_user('checkin_teacher', password='pass', email='t@example.com')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        self.student = User.objects.create_user('checkin_student', password='pass', email='s@example.com')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.staff = User.objects.create_user('checkin_staff', password='pass')
+        self.staff.groups.add(Group.objects.get(name='staff'))
+        plan = MembershipPlan.objects.create(name='Check-in pass', price_cents=0, ticket_allowance=5)
+        Membership.objects.create(user=self.student, plan=plan, is_active=True, tickets_remaining=5)
+        start = timezone.now() + timedelta(hours=2)
+        self.session = Session.objects.create(
+            teacher=self.teacher,
+            title='Check-in lesson',
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            capacity=2,
+            status='open',
+        )
+        create_booking(self.student, self.session)
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_staff_can_set_open_and_reminder_hours(self):
+        from scheduling.services.checkin import serialize_checkin_config, update_checkin_config
+
+        config, err = update_checkin_config(
+            check_in_opens_hours_before=12,
+            reminder_hours_before=2,
+        )
+        self.assertIsNone(err)
+        self.assertEqual(serialize_checkin_config(config)['check_in_opens_hours_before'], 12)
+        bad, bad_err = update_checkin_config(reminder_hours_before=48)
+        self.assertIsNone(bad)
+        self.assertIn('at or after check-in opens', bad_err)
+
+        res = self.client.patch(
+            '/api/staff/check-in/',
+            {'check_in_opens_hours_before': 24, 'reminder_hours_before': 3},
+            content_type='application/json',
+            **self._auth(self.staff),
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.json()['reminder_hours_before'], 3)
+
+    def test_check_in_opens_only_inside_staff_window(self):
+        from scheduling.services.checkin import record_check_in, update_checkin_config
+
+        update_checkin_config(check_in_opens_hours_before=1, reminder_hours_before=0)
+        row, error = record_check_in(self.session, self.student)
+        self.assertIsNone(row)
+        self.assertEqual(error, 'Check-in is not open yet.')
+
+        update_checkin_config(check_in_opens_hours_before=24, reminder_hours_before=3)
+        row, error = record_check_in(self.session, self.student)
+        self.assertIsNone(error)
+        self.assertIsNotNone(row.checked_in_at)
+
+        res = self.client.post(
+            f'/api/sessions/{self.session.id}/check-in/',
+            {},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertTrue(res.json()['check_in']['checked_in'])
+
+    @patch('scheduling.services.notifications.send_mail')
+    def test_reminder_emails_once_when_due_and_skips_checked_in(self, mock_send_mail):
+        from scheduling.services.checkin import record_check_in, send_due_checkin_reminders
+
+        record_check_in(self.session, self.student)
+        result = send_due_checkin_reminders()
+        self.assertEqual(result['sent'], 1)
+        self.assertEqual(mock_send_mail.call_count, 1)
+        self.assertEqual(mock_send_mail.call_args.args[3], ['t@example.com'])
+        send_due_checkin_reminders()
+        self.assertEqual(mock_send_mail.call_count, 1)

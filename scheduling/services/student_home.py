@@ -3,10 +3,11 @@
 from django.utils import timezone
 
 from scheduling.models import Booking, ClassRequest, Membership
+from scheduling.services.checkin import check_in_payload, home_check_ins_for_student
 from scheduling.services.membership import total_tickets_remaining
 
 
-def _serialize_booking(booking):
+def _serialize_booking(booking, user):
     session = booking.session
     return {
         'id': booking.id,
@@ -21,6 +22,7 @@ def _serialize_booking(booking):
             if session and session.class_offering_id
             else None
         ),
+        'check_in': check_in_payload(session, user) if session else None,
     }
 
 
@@ -31,7 +33,7 @@ def student_home(user, *, low_ticket_threshold=2):
         Booking.objects.filter(
             student=user,
             status='confirmed',
-            session__start_time__gte=now,
+            session__end_time__gte=now,
         )
         .select_related(
             'session',
@@ -83,7 +85,8 @@ def student_home(user, *, low_ticket_threshold=2):
         pass
 
     return {
-        'next_lesson': _serialize_booking(next_booking) if next_booking else None,
+        'next_lesson': _serialize_booking(next_booking, user) if next_booking else None,
+        'check_ins': home_check_ins_for_student(user),
         'pending_class_requests': pending_requests,
         'tickets_remaining': tickets_remaining,
         'has_membership': has_membership,

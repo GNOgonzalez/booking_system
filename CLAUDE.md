@@ -46,6 +46,7 @@ python manage.py bootstrap_sandbox --demo --showcase  # portfolio demo seed
 python manage.py bootstrap_sandbox --demo --staff-superuser  # + /admin/ for demo_staff (local only)
 python manage.py seed_cefr_curriculum  # CEFR A1–C2 English template (idempotent; --refresh resets progress)
 python manage.py purge_expired_homework       # delete homework files past 7 days
+python manage.py send_checkin_reminders       # email anyone who has not checked in yet
 
 python manage.py runserver                    # :8000
 python manage.py test                         # SQLite test DB
@@ -123,6 +124,7 @@ docs/adaptive-curriculum.md  CEFR path, suggestion rules, AI layer
 | GET | `sessions/today/?date=&branch=` (in-branch classes still joinable; walk-ins listed until `end_time`) | student |
 | GET/POST | `bookings/`, `bookings/create/` | student |
 | POST | `bookings/<id>/cancel/` | student |
+| POST | `sessions/<id>/check-in/` | teacher or booked student (window set by staff) |
 | GET/POST | `membership/` | student |
 
 ### Teacher
@@ -162,6 +164,7 @@ docs/adaptive-curriculum.md  CEFR path, suggestion rules, AI layer
 | POST | `staff/bookings/<id>/cancel/` (with refund choice) | staff |
 | GET | `staff/payments/` (mode + Stripe status; no secrets) | staff |
 | GET | `staff/integrations/` (email + Google status; no secrets) | staff |
+| GET/PATCH | `staff/check-in/` | staff (hours before start for open window + reminder email) |
 | GET | `staff/activity/` (staff override audit log) | staff |
 | GET | `staff/class-requests/` (studio-wide pending queue) | staff |
 | GET | `staff/alerts/` | staff |

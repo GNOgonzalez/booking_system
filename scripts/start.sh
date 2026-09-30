@@ -27,6 +27,9 @@ fi
 echo "==> purge_expired_homework"
 python manage.py purge_expired_homework || echo "purge_expired_homework failed; continuing"
 
+echo "==> send_checkin_reminders"
+python manage.py send_checkin_reminders || echo "send_checkin_reminders failed; continuing"
+
 echo "==> gunicorn on ${PORT:-8000} (${WEB_CONCURRENCY:-2} workers)"
 exec gunicorn config.wsgi:application \
   --bind "0.0.0.0:${PORT:-8000}" \

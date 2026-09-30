@@ -22,7 +22,9 @@ from .models import (
     Payment,
     Profile,
     Session,
+    SessionCheckIn,
     SpecialAvailability,
+    StudioCheckInConfig,
     StaffAlert,
     StaffAlertRead,
     StudentCurriculum,
@@ -50,6 +52,8 @@ admin.site.register(StudioLLMConfig)
 admin.site.register(AvailabilityBlock)
 admin.site.register(SpecialAvailability)
 admin.site.register(Session)
+admin.site.register(SessionCheckIn)
+admin.site.register(StudioCheckInConfig)
 admin.site.register(Booking)
 admin.site.register(MembershipPlan)
 admin.site.register(Membership)
