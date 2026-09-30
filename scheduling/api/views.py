@@ -60,7 +60,7 @@ from scheduling.services.payments import (
     purchase_membership,
 )
 from scheduling.services.roster import roster_students_for_teacher
-from scheduling.services.sessions import cancel_session, sessions_for_list, update_session
+from scheduling.services.sessions import cancel_session, sessions_for_list, update_session, visible_open_sessions
 from scheduling.services.student_home import student_home
 from scheduling.services.teacher_permissions import (
     TEACHER_PERMISSION_DEFS,
@@ -106,6 +106,7 @@ class OpenSessionListView(generics.ListAPIView):
             session_id=OuterRef('pk'),
             status='confirmed',
         )
+        qs = visible_open_sessions(qs, self.request.user)
         return sessions_for_list(qs).annotate(student_booked=Exists(booked))
 
 
@@ -404,7 +405,12 @@ class TeacherClassOfferingListCreateView(generics.ListCreateAPIView):
     serializer_class = ClassOfferingSerializer
 
     def get_queryset(self):
-        return ClassOffering.objects.filter(teacher=self.request.user).prefetch_related('topics').order_by('-is_active', 'subject')
+        return (
+            ClassOffering.objects.filter(teacher=self.request.user)
+            .select_related('track')
+            .prefetch_related('topics', 'track__modules')
+            .order_by('-is_active', 'subject')
+        )
 
     def perform_create(self, serializer):
         if not teacher_can(self.request.user, 'manage_classes'):

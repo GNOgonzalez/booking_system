@@ -13,16 +13,21 @@ export default function InboxPage() {
 
   return (
     <div>
-      <h1>Inbox</h1>
+      <div className="page-header">
+        <div>
+          <h1>Inbox</h1>
+          <p className="page-intro">Messages from the studio and your teachers.</p>
+        </div>
+      </div>
       {error && <p className="error">{error}</p>}
       {messages.map((msg) => (
         <div key={msg.id} className="card">
           <strong>{msg.subject}</strong>
-          <p>From {msg.sender_name}</p>
+          <p className="card-meta">From {msg.sender_name}</p>
           <p>{msg.body}</p>
         </div>
       ))}
-      {!messages.length && !error && <p>No messages.</p>}
+      {!messages.length && !error && <p className="empty">No messages.</p>}
     </div>
   )
 }

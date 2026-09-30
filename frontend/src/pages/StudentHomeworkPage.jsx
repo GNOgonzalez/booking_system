@@ -34,10 +34,14 @@ export default function StudentHomeworkPage() {
   return (
     <div className="homework-layout">
       <div>
-        <h1>Homework</h1>
-        <p className="page-intro">
-          Files from your teacher (kept 7 days) and journal prompts you can write in anytime.
-        </p>
+        <div className="page-header">
+          <div>
+            <h1>Homework</h1>
+            <p className="page-intro">
+              Files from your teacher (kept 7 days) and journal prompts you can write in anytime.
+            </p>
+          </div>
+        </div>
         {error && <div className="error">{error}</div>}
 
         {assignments.map((item) => (

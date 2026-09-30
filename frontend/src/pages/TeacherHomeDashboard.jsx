@@ -40,8 +40,10 @@ export default function TeacherHomeDashboard({ canWriteReports = true }) {
 
   return (
     <>
-      <div className="card">
-        <div className="card-title">
+      <div className={missing.length ? 'hero-card' : 'card'}>
+        <div className={missing.length ? 'hero-body' : ''}>
+        {missing.length > 0 && <div className="hero-eyebrow">Catch up</div>}
+        <div className={missing.length ? 'hero-title' : 'card-title'}>
           {labels('report')} to write
           {missing.length > 0 && <span className="badge"> {data.missing_reports_total}</span>}
         </div>
@@ -79,6 +81,7 @@ export default function TeacherHomeDashboard({ canWriteReports = true }) {
             )}
           </>
         )}
+        </div>
       </div>
 
       <div className="card">

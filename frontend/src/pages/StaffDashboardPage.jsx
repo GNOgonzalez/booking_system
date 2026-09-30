@@ -161,10 +161,14 @@ export default function StaffDashboardPage() {
 
   return (
     <div>
-      <h1>Staff dashboard</h1>
-      <p className="page-intro">
-        Manage {labels('teacher').toLowerCase()}, schedules, {labels('class').toLowerCase()}, and {label('studio').toLowerCase()}-wide settings.
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>Staff dashboard</h1>
+          <p className="page-intro">
+            Manage {labels('teacher').toLowerCase()}, schedules, {labels('class').toLowerCase()}, and {label('studio').toLowerCase()}-wide settings.
+          </p>
+        </div>
+      </div>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
 
@@ -214,17 +218,12 @@ export default function StaffDashboardPage() {
       </div>
 
       <div className="card">
-        <div className="card-title">Class roadmap</div>
-        <p className="card-meta">Subjects, levels, focuses, and topics teachers pick when creating {labels('class').toLowerCase()}.</p>
-        <Link to="/staff/class-catalog" className="btn secondary">Manage roadmap</Link>
-      </div>
-
-      <div className="card">
-        <div className="card-title">Curriculum templates</div>
+        <div className="card-title">Curriculum</div>
         <p className="card-meta">
-          Premade learning paths students can pick. Assign teachers to students so they can skip modules or build a custom path.
+          Studio paths students can pick, plus personalized curricula for one student.
+          Teachers attach a path when they create a class; open sessions use that path&apos;s lessons.
         </p>
-        <Link to="/staff/curriculum" className="btn secondary">Manage curriculum</Link>
+        <Link to="/staff/curriculum" className="btn secondary">Manage curricula</Link>
       </div>
 
       <div className="card">

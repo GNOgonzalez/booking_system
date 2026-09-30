@@ -92,8 +92,9 @@ def send_teacher_class_request_notification(class_request, *, teacher):
     student = class_request.student
     label = _class_request_label(class_request)
     topic = ''
-    if class_request.class_topic_id:
-        topic = f"\nTopic: {class_request.class_topic.title}\n"
+    lesson = class_request.curriculum_module or class_request.class_topic
+    if lesson is not None:
+        topic = f"\nLesson: {lesson.title}\n"
     open_note = ''
     if class_request.open_to_any_teacher and class_request.teacher_id is None:
         open_note = (

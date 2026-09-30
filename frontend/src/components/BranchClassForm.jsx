@@ -95,7 +95,7 @@ export default function BranchClassForm({
         accepts_walk_ins: walkIns,
       }
       if (teacherOptions) body.teacher = Number(teacherId)
-      if (topicId) body.class_topic_id = Number(topicId)
+      if (topicId) body.curriculum_module_id = Number(topicId)
       if (capacity) body.capacity = Number(capacity)
       const session = await apiFetch(postPath(branchId), { method: 'POST', body: JSON.stringify(body) })
       setSaved(session)
@@ -140,12 +140,12 @@ export default function BranchClassForm({
             <p className="card-meta">This teacher has no active classes to schedule.</p>
           )}
         </div>
-        {offering?.topics?.length > 0 && (
+        {(offering?.modules || offering?.topics || []).length > 0 && (
           <div className="field grow">
-            <label htmlFor="bcf-topic">Topic</label>
+            <label htmlFor="bcf-topic">Lesson</label>
             <select id="bcf-topic" value={topicId} onChange={(e) => setTopicId(e.target.value)}>
               <option value="">General</option>
-              {offering.topics.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+              {(offering.modules || offering.topics).map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
             </select>
           </div>
         )}

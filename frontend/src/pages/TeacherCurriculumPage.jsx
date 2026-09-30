@@ -132,20 +132,28 @@ export default function TeacherCurriculumPage() {
 
   return (
     <div>
-      {!isStaff && <h1>Student curriculum</h1>}
-      <p className="page-intro">
-        Assigned students and anyone you have already taught. Skip a module or build a custom path.
-      </p>
+      <div className="page-header">
+        <div>
+          {!isStaff && <h1>Student curriculum</h1>}
+          <p className="page-intro">
+            Assigned students and anyone you have already taught. Skip a module, or build a personalized
+            curriculum — only those students will see open sessions on that path.
+          </p>
+        </div>
+        {canEdit && (
+          <div className="page-header-actions">
+            <button
+              type="button"
+              className={showCustom ? 'secondary' : ''}
+              onClick={() => setShowCustom((open) => !open)}
+            >
+              {showCustom ? 'Close custom curriculum' : 'New custom curriculum'}
+            </button>
+          </div>
+        )}
+      </div>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
-
-      {canEdit && (
-        <p>
-          <button type="button" className={showCustom ? 'secondary' : ''} onClick={() => setShowCustom((open) => !open)}>
-            {showCustom ? 'Close custom curriculum' : 'New custom curriculum'}
-          </button>
-        </p>
-      )}
 
       {showCustom && canEdit && (
         <form onSubmit={saveCustom} className="card">
@@ -232,74 +240,91 @@ export default function TeacherCurriculumPage() {
       )}
 
       {students.length > 0 && (
-        <div className="field">
-          <label htmlFor="curriculum-student">Student</label>
-          <select
-            id="curriculum-student"
-            value={selectedId || ''}
-            onChange={(e) => setSelectedId(Number(e.target.value))}
-          >
-            {students.map((student) => (
-              <option key={student.id} value={student.id}>
-                {student.label}
-                {student.assigned ? '' : ' (taught)'}
-              </option>
-            ))}
-          </select>
+        <div className="toolbar">
+          <div className="field" style={{ margin: 0, minWidth: '16rem' }}>
+            <label htmlFor="curriculum-student">Student</label>
+            <select
+              id="curriculum-student"
+              value={selectedId || ''}
+              onChange={(e) => setSelectedId(Number(e.target.value))}
+            >
+              {students.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.label}
+                  {student.assigned ? '' : ' (taught)'}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
       {selected && (
         <div className="card">
-          <div className="card-title">{selected.label}</div>
-          {selected.assigned && <div className="card-meta">Staff assigned</div>}
+          <div className="section-head">
+            <h2>{selected.label}</h2>
+            {selected.assigned && <span className="badge badge--muted">Staff assigned</span>}
+          </div>
           {enrollment ? (
             <>
-              <h3>
-                {enrollment.track.title}
-                {enrollment.track.framework === 'cefr' && <> <span className="badge">CEFR</span></>}
-              </h3>
+              <div className="section-head">
+                <h3>
+                  {enrollment.track.title}
+                  {enrollment.track.framework === 'cefr' && <> <span className="badge">CEFR</span></>}
+                </h3>
+                <span className="progress-value">
+                  {enrollment.track.modules.filter((m) => m.status === 'completed').length}
+                  {' of '}
+                  {enrollment.track.modules.length} done
+                </span>
+              </div>
               {enrollment.track.description && <p className="card-meta">{enrollment.track.description}</p>}
-              {enrollment.track.modules.map((module) => (
-                <div
-                  key={module.id}
-                  className={`card${module.is_current ? ' curriculum-module--current' : ''}`}
-                >
-                  <div className="card-row">
-                    <div>
-                      <div className="card-title">
-                        {module.cefr_level && <><span className="badge">{module.cefr_level}</span> </>}
-                        {module.title}
-                      </div>
-                      <div className="card-meta">
-                        {statusLabel(module.status)}
-                        {module.is_current ? ' · Current' : ''}
-                        {module.skill_keys?.length ? ` · ${module.skill_keys.join(', ')}` : ''}
-                      </div>
-                      {module.content && <p>{module.content}</p>}
-                    </div>
-                    {canEdit && (
-                      <div className="row-actions">
-                        {module.status !== 'skipped' && (
-                          <button type="button" className="secondary" onClick={() => setProgress(module.id, 'skipped')}>
-                            Skip
-                          </button>
-                        )}
-                        {module.status !== 'completed' && (
-                          <button type="button" className="secondary" onClick={() => setProgress(module.id, 'completed')}>
-                            Mark done
-                          </button>
-                        )}
-                        {module.status !== 'pending' && (
-                          <button type="button" className="ghost" onClick={() => setProgress(module.id, 'pending')}>
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+              <ul className="module-list">
+                {enrollment.track.modules.map((module) => {
+                  const state = module.status === 'completed'
+                    ? 'done'
+                    : module.is_current ? 'current' : 'upcoming'
+                  return (
+                    <li
+                      key={module.id}
+                      className={`module-item module-item--${state}`}
+                    >
+                      <span className={`status-dot status-dot--${state}`} aria-hidden="true" />
+                      <span className="module-item-text">
+                        <span className="module-title">
+                          {module.cefr_level && <><span className="badge">{module.cefr_level}</span>{' '}</>}
+                          {module.title}
+                        </span>
+                        <span className="card-meta">
+                          {statusLabel(module.status)}
+                          {module.is_current ? ' · Current' : ''}
+                          {module.skill_keys?.length ? ` · ${module.skill_keys.join(', ')}` : ''}
+                        </span>
+                        {module.content && <span className="card-meta">{module.content}</span>}
+                      </span>
+                      {canEdit && (
+                        <span className="row-actions module-item-actions">
+                          {module.status !== 'skipped' && (
+                            <button type="button" onClick={() => setProgress(module.id, 'skipped')}>
+                              Skip
+                            </button>
+                          )}
+                          {module.status !== 'completed' && (
+                            <button type="button" onClick={() => setProgress(module.id, 'completed')}>
+                              Mark done
+                            </button>
+                          )}
+                          {module.status !== 'pending' && (
+                            <button type="button" className="ghost" onClick={() => setProgress(module.id, 'pending')}>
+                              Reset
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
             </>
           ) : (
             <p className="card-meta">Not on a curriculum yet.</p>

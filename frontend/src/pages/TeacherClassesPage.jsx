@@ -4,26 +4,11 @@ import { apiFetch } from '../api.js'
 import { useTeacherScope } from '../hooks/useTeacherScope.js'
 import { useTeacherPermissions } from '../hooks/useTeacherPermissions.js'
 import { useGlossary } from '../hooks/useGlossary.jsx'
-import ClassCatalogPicker, {
-  catalogSelectionToTopics,
-  EMPTY_CATALOG_SELECTION,
-} from '../components/ClassCatalogPicker.jsx'
 
-function formatTopics(item) {
-  const titles = (item.topics || []).map((topic) => topic.title).filter(Boolean)
-  if (!titles.length) return '—'
-  const suffix = item.topics_ordered ? ' (in order)' : ''
-  return `${titles.join(' · ')}${suffix}`
-}
-
-function catalogFromClass(item) {
-  return {
-    subject: item.subject || '',
-    level: item.level || '',
-    focus: item.focus || '',
-    topicTitles: (item.topics || []).map((topic) => topic.title),
-    topics_ordered: Boolean(item.topics_ordered),
-  }
+function lessonList(item) {
+  const modules = item.modules?.length ? item.modules : (item.topics || [])
+  const titles = modules.map((row) => row.title).filter(Boolean)
+  return titles.length ? titles.join(' · ') : '—'
 }
 
 export default function TeacherClassesPage() {
@@ -32,59 +17,46 @@ export default function TeacherClassesPage() {
   const { label, labels } = useGlossary()
   const canEdit = isStaff || can('manage_classes')
   const [classes, setClasses] = useState([])
-  const [form, setForm] = useState({
-    catalog: { ...EMPTY_CATALOG_SELECTION },
-    default_capacity: 4,
-    ticket_cost: 1,
-  })
+  const [tracks, setTracks] = useState([])
+  const [form, setForm] = useState({ track: '', default_capacity: 4, ticket_cost: 1 })
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
   const load = () => {
-    apiFetch(paths.classes)
-      .then(setClasses)
+    Promise.all([
+      apiFetch(paths.classes),
+      apiFetch('/api/curriculum/tracks/'),
+    ])
+      .then(([classRows, trackRows]) => {
+        setClasses(classRows)
+        setTracks(trackRows)
+      })
       .catch((err) => setError(err.message))
   }
 
   useEffect(load, [paths.classes])
 
-  const onField = (key) => (e) => setForm({ ...form, [key]: e.target.value })
-
   const add = async (e) => {
     e.preventDefault()
     setError('')
     setMessage('')
-    const { catalog } = form
-    const topics = catalogSelectionToTopics(catalog.topicTitles)
-    if (!catalog.subject || !catalog.level || !catalog.focus) {
-      setError('Choose subject, level, and focus.')
-      return
-    }
-    if (!topics.length) {
-      setError('Select at least one topic.')
+    if (!form.track) {
+      setError('Choose a curriculum.')
       return
     }
     try {
       await apiFetch(paths.classes, {
         method: 'POST',
         body: JSON.stringify({
-          subject: catalog.subject,
-          level: catalog.level,
-          focus: catalog.focus,
-          topics_ordered: catalog.topics_ordered,
-          topics,
+          track: Number(form.track),
           default_capacity: Number(form.default_capacity),
           ticket_cost: Number(form.ticket_cost) || 1,
           is_active: true,
         }),
       })
-      setForm({
-        catalog: { ...EMPTY_CATALOG_SELECTION },
-        default_capacity: 4,
-        ticket_cost: 1,
-      })
+      setForm({ track: '', default_capacity: 4, ticket_cost: 1 })
       setMessage(`${label('class')} added.`)
       load()
     } catch (err) {
@@ -95,7 +67,7 @@ export default function TeacherClassesPage() {
   const startEdit = (item) => {
     setEditingId(item.id)
     setEditForm({
-      catalog: catalogFromClass(item),
+      track: item.track || '',
       default_capacity: item.default_capacity,
       ticket_cost: item.ticket_cost ?? 1,
     })
@@ -105,21 +77,11 @@ export default function TeacherClassesPage() {
     e.preventDefault()
     setError('')
     setMessage('')
-    const { catalog } = editForm
-    const topics = catalogSelectionToTopics(catalog.topicTitles)
-    if (!topics.length) {
-      setError('Select at least one topic.')
-      return
-    }
     try {
       await apiFetch(paths.classDetail(editingId), {
         method: 'PATCH',
         body: JSON.stringify({
-          subject: catalog.subject,
-          level: catalog.level,
-          focus: catalog.focus,
-          topics_ordered: catalog.topics_ordered,
-          topics,
+          track: editForm.track ? Number(editForm.track) : undefined,
           default_capacity: Number(editForm.default_capacity),
           ticket_cost: Number(editForm.ticket_cost) || 1,
         }),
@@ -158,33 +120,56 @@ export default function TeacherClassesPage() {
     }
   }
 
+  const curriculumPage = isStaff ? '/staff/curriculum' : '/teacher/curriculum'
+
   return (
     <div>
       {!isStaff && <h1>{labels('class')}</h1>}
       <p className="page-intro">
-        Teachable catalog — pick subject, level, focus, and topics from the studio roadmap.
-        {isStaff && (
-          <> <Link to="/staff/class-catalog">Manage roadmap</Link>.</>
-        )}
+        A class is you teaching a curriculum: seats and ticket cost. Open sessions use that path&apos;s modules.
+        Personalized curricula only show to students enrolled on them.
+        {' '}<Link to={curriculumPage}>Edit curricula</Link>.
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
 
       {canEdit ? (
         <form onSubmit={add} className="card">
-          <ClassCatalogPicker
-            value={form.catalog}
-            onChange={(catalog) => setForm({ ...form, catalog })}
-            showStaffCatalogLink={isStaff}
-          />
+          <div className="field">
+            <label htmlFor="class-track">Curriculum</label>
+            <select
+              id="class-track"
+              value={form.track}
+              onChange={(e) => setForm({ ...form, track: e.target.value })}
+            >
+              <option value="">Choose a path…</option>
+              {tracks.map((track) => (
+                <option key={track.id} value={track.id}>
+                  {track.title}
+                  {track.is_template ? '' : ' (personalized)'}
+                  {` · ${track.module_count} modules`}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="row">
             <div className="field" style={{ maxWidth: '8rem' }}>
               <label>Default capacity</label>
-              <input type="number" min="1" value={form.default_capacity} onChange={onField('default_capacity')} />
+              <input
+                type="number"
+                min="1"
+                value={form.default_capacity}
+                onChange={(e) => setForm({ ...form, default_capacity: e.target.value })}
+              />
             </div>
             <div className="field" style={{ maxWidth: '8rem' }}>
               <label>Ticket cost</label>
-              <input type="number" min="1" value={form.ticket_cost} onChange={onField('ticket_cost')} />
+              <input
+                type="number"
+                min="1"
+                value={form.ticket_cost}
+                onChange={(e) => setForm({ ...form, ticket_cost: e.target.value })}
+              />
             </div>
           </div>
           <button type="submit">Add {label('class').toLowerCase()}</button>
@@ -197,11 +182,20 @@ export default function TeacherClassesPage() {
         <div key={item.id} className={`card class-catalog-row${item.is_active ? '' : ' card--inactive'}`}>
           {editingId === item.id ? (
             <form onSubmit={saveEdit}>
-              <ClassCatalogPicker
-                value={editForm.catalog}
-                onChange={(catalog) => setEditForm({ ...editForm, catalog })}
-                showStaffCatalogLink={isStaff}
-              />
+              <div className="field">
+                <label>Curriculum</label>
+                <select
+                  value={editForm.track}
+                  onChange={(e) => setEditForm({ ...editForm, track: e.target.value })}
+                >
+                  {tracks.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {track.title}
+                      {track.is_template ? '' : ' (personalized)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="row">
                 <div className="field" style={{ maxWidth: '8rem' }}>
                   <label>Default capacity</label>
@@ -232,6 +226,7 @@ export default function TeacherClassesPage() {
               <div className="card-row">
                 <div className="card-title">
                   {item.label}
+                  {item.is_personalized && <span className="badge">Personalized</span>}
                   {!item.is_active && <span className="badge badge--muted">Inactive</span>}
                 </div>
                 {canEdit && (
@@ -246,17 +241,15 @@ export default function TeacherClassesPage() {
                 )}
               </div>
               <dl className="class-catalog-meta">
-                <div><dt>Subject</dt><dd>{item.subject}</dd></div>
-                <div><dt>Level</dt><dd>{item.level}</dd></div>
-                <div><dt>Focus</dt><dd>{item.focus}</dd></div>
-                <div><dt>Topics</dt><dd>{formatTopics(item)}</dd></div>
+                <div><dt>Lessons</dt><dd>{lessonList(item)}</dd></div>
                 <div><dt>Tickets</dt><dd>{item.ticket_cost ?? 1}</dd></div>
+                <div><dt>Seats</dt><dd>{item.default_capacity}</dd></div>
               </dl>
             </>
           )}
         </div>
       ))}
-      {!classes.length && !error && <p className="card-meta">No {labels('class').toLowerCase()} yet — add your first one above.</p>}
+      {!classes.length && !error && <p className="card-meta">No {labels('class').toLowerCase()} yet — attach a curriculum above.</p>}
     </div>
   )
 }

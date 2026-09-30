@@ -119,23 +119,26 @@ export default function StaffCurriculumPage() {
   return (
     <div>
       <p className="card-meta"><Link to="/staff">← Staff dashboard</Link></p>
-      <h1>Curriculum templates</h1>
-      <p className="page-intro">
-        Premade paths students can pick, in order. Teachers can skip a module or build a custom path
-        for assigned students.
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>Curriculum</h1>
+          <p className="page-intro">
+            Studio paths any student can pick, or uncheck “Students can pick this” for a personalized
+            curriculum. Only enrolled students see open sessions on a personalized path.
+          </p>
+        </div>
+        {!editingId && (
+          <div className="page-header-actions">
+            <button type="button" onClick={startNew}>New curriculum</button>
+          </div>
+        )}
+      </div>
       <p className="card-meta">
         The CEFR English path comes from <code>python manage.py seed_cefr_curriculum</code>. Editing its
         modules here resets student progress on that track.
       </p>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
-
-      {!editingId && (
-        <p>
-          <button type="button" onClick={startNew}>New curriculum</button>
-        </p>
-      )}
 
       {editingId && (
         <form onSubmit={save} className="card">
@@ -158,7 +161,7 @@ export default function StaffCurriculumPage() {
               checked={form.is_template}
               onChange={(e) => setForm({ ...form, is_template: e.target.checked })}
             />
-            Students can pick this (premade)
+            Students can pick this (studio path). Uncheck for a personalized curriculum.
           </label>
           <label className="checkbox-row">
             <input
@@ -170,7 +173,7 @@ export default function StaffCurriculumPage() {
           </label>
           <h3>Modules (in order)</h3>
           {form.modules.map((module, index) => (
-            <div key={index} className="card">
+            <div key={index} className="module-editor">
               <div className="field">
                 <label>Module {index + 1} title</label>
                 <input
@@ -202,28 +205,28 @@ export default function StaffCurriculumPage() {
         </form>
       )}
 
-      {tracks.map((track) => (
-        <div key={track.id} className="card">
-          <div className="card-row">
-            <div>
-              <div className="card-title">
-                {track.title}
-                {track.framework === 'cefr' && <> <span className="badge">CEFR A1–C2</span></>}
+      {tracks.length > 0 && (
+        <div className="course-grid">
+          {tracks.map((track) => (
+            <div key={track.id} className="course-card">
+              <div className="course-card-title">{track.title}</div>
+              <div className="row-actions">
+                {track.framework === 'cefr' && <span className="badge">CEFR A1–C2</span>}
+                <span className="badge badge--muted">{track.is_template ? 'Studio path' : 'Personalized'}</span>
+                {!track.is_active && <span className="badge badge--warning">Hidden</span>}
               </div>
               <div className="card-meta">
                 {track.module_count} module{track.module_count === 1 ? '' : 's'}
-                {track.is_template ? ' · Premade' : ' · Custom'}
-                {track.is_active ? '' : ' · Hidden'}
               </div>
               {track.description && <p className="card-meta">{track.description}</p>}
+              <div className="course-card-foot row-actions">
+                <button type="button" onClick={() => startEdit(track)}>Edit</button>
+                <button type="button" className="danger" onClick={() => removeTrack(track)}>Delete</button>
+              </div>
             </div>
-            <div className="row-actions">
-              <button type="button" className="secondary" onClick={() => startEdit(track)}>Edit</button>
-              <button type="button" className="danger" onClick={() => removeTrack(track)}>Delete</button>
-            </div>
-          </div>
+          ))}
         </div>
-      ))}
+      )}
       {!tracks.length && !error && <p className="empty">No curricula yet.</p>}
     </div>
   )

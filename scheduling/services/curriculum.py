@@ -21,6 +21,15 @@ def list_templates():
     )
 
 
+def list_schedulable_tracks():
+    """Studio templates plus personalized tracks a teacher can attach to a class."""
+    return (
+        CurriculumTrack.objects.filter(is_active=True)
+        .prefetch_related('modules')
+        .order_by('-is_template', 'title')
+    )
+
+
 def list_staff_tracks():
     return CurriculumTrack.objects.prefetch_related('modules').order_by('-is_template', 'title')
 

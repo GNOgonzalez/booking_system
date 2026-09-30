@@ -1,6 +1,42 @@
 """Class catalog helpers."""
 
+from django.db.models import Q
+
 from scheduling.models import ClassTopic
+
+
+def offering_visible_to_student(offering, student):
+    """Studio-path classes are public; personalized tracks require enrollment."""
+    if offering is None or not offering.track_id:
+        return True
+    if offering.track.is_template:
+        return True
+    from scheduling.models import StudentCurriculum
+
+    return StudentCurriculum.objects.filter(
+        student=student, track_id=offering.track_id, is_active=True,
+    ).exists()
+
+
+def visible_offerings(queryset, student):
+    """Hide personalized-track classes from students who are not enrolled on them."""
+    from scheduling.models import StudentCurriculum
+
+    enrolled = list(
+        StudentCurriculum.objects.filter(student=student, is_active=True).values_list('track_id', flat=True)
+    )
+    personalized = Q(track__isnull=False, track__is_template=False)
+    return queryset.filter(~personalized | Q(track_id__in=enrolled))
+
+
+def apply_track_to_offering(offering, track):
+    """Copy track labels onto the bookable class. A track is always ordered."""
+    offering.track = track
+    offering.subject = (track.subject or 'Custom')[:100]
+    offering.level = (track.cefr_band or ('' if track.is_template else 'Personalized'))[:100]
+    offering.focus = track.title[:150]
+    offering.topics_ordered = True
+    return offering
 
 
 def sync_class_topics(offering, topics_data):
@@ -33,6 +69,7 @@ def sync_class_topics(offering, topics_data):
 
 def update_class_offering(offering, teacher, **fields):
     topics = fields.pop('topics', None)
+    track = fields.pop('track', None)
     allowed = {
         'subject',
         'level',
@@ -47,6 +84,8 @@ def update_class_offering(offering, teacher, **fields):
             setattr(offering, key, value)
     if offering.teacher_id != teacher.id:
         return False
+    if track is not None:
+        apply_track_to_offering(offering, track)
     offering.save()
     if topics is not None:
         sync_class_topics(offering, topics)

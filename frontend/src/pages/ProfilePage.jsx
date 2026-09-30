@@ -167,11 +167,15 @@ export default function ProfilePage({ onSaved }) {
 
   return (
     <div>
-      <h1>Profile &amp; settings</h1>
-      <p className="page-intro">
-        Signed in as <strong>{username}</strong>
-        {roles.length > 0 && <> · <span className="badge">{roles.join(', ')}</span></>}
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>Profile &amp; settings</h1>
+          <p className="page-intro">
+            Signed in as <strong>{username}</strong>
+            {roles.length > 0 && <> · <span className="badge">{roles.join(', ')}</span></>}
+          </p>
+        </div>
+      </div>
 
       <div className="card">
         <h2>Your information</h2>

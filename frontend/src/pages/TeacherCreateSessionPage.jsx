@@ -22,11 +22,13 @@ const DURATION_OPTIONS = [
   { minutes: 90, label: '1 hour 30 minutes' },
 ]
 
+function lessonsOf(item) {
+  return (item.modules?.length ? item.modules : item.topics) || []
+}
+
 function formatTopics(item) {
-  const titles = (item.topics || []).map((topic) => topic.title).filter(Boolean)
-  if (!titles.length) return '—'
-  const suffix = item.topics_ordered ? ' (in order)' : ''
-  return `${titles.join(' · ')}${suffix}`
+  const titles = lessonsOf(item).map((row) => row.title).filter(Boolean)
+  return titles.length ? titles.join(' · ') : '—'
 }
 
 function isAvailabilityError(message) {
@@ -80,7 +82,7 @@ export default function TeacherCreateSessionPage() {
         if (active.length === 1) {
           setClassOffering(String(active[0].id))
           setCapacity(String(active[0].default_capacity))
-          const firstTopic = active[0].topics?.[0]
+          const firstTopic = lessonsOf(active[0])[0]
           setClassTopicId(firstTopic ? String(firstTopic.id) : '')
         }
       })
@@ -135,7 +137,7 @@ export default function TeacherCreateSessionPage() {
     const picked = classes.find((c) => String(c.id) === id)
     if (picked) {
       setCapacity(String(picked.default_capacity))
-      const firstTopic = picked.topics?.[0]
+      const firstTopic = lessonsOf(picked)[0]
       setClassTopicId(firstTopic ? String(firstTopic.id) : '')
     } else {
       setClassTopicId('')
@@ -169,7 +171,7 @@ export default function TeacherCreateSessionPage() {
       : datetimeLocalToIso(end)
     return {
       class_offering: Number(classOffering),
-      class_topic_id: classTopicId ? Number(classTopicId) : null,
+      curriculum_module_id: classTopicId ? Number(classTopicId) : null,
       start_time: startIso,
       end_time: endIso,
       capacity: capacity ? Number(capacity) : undefined,
@@ -305,17 +307,16 @@ export default function TeacherCreateSessionPage() {
         {selected && (
           <>
             <dl className="class-catalog-meta class-catalog-meta--compact">
-              <div><dt>Subject</dt><dd>{selected.subject}</dd></div>
-              <div><dt>Level</dt><dd>{selected.level}</dd></div>
-              <div><dt>Focus</dt><dd>{selected.focus}</dd></div>
-              <div><dt>Topics</dt><dd>{formatTopics(selected)}</dd></div>
+              <div><dt>Curriculum</dt><dd>{selected.track_title || selected.label}</dd></div>
+              <div><dt>Lessons</dt><dd>{formatTopics(selected)}</dd></div>
+              {selected.is_personalized && <div><dt>Who</dt><dd>Enrolled students only</dd></div>}
             </dl>
-            {selected.topics?.length > 0 && (
+            {lessonsOf(selected).length > 0 && (
               <div className="field">
-                <label>Topic for this session</label>
+                <label>Lesson for this session</label>
                 <select value={classTopicId} onChange={(e) => setClassTopicId(e.target.value)} disabled={busy}>
-                  <option value="">General / no specific topic</option>
-                  {selected.topics.map((topic) => (
+                  <option value="">General / no specific lesson</option>
+                  {lessonsOf(selected).map((topic) => (
                     <option key={topic.id} value={topic.id}>{topic.title}</option>
                   ))}
                 </select>

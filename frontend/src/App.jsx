@@ -8,6 +8,7 @@ import OnboardingChecklist from './components/OnboardingChecklist.jsx'
 import { BrandingProvider, useBranding } from './hooks/useBranding.jsx'
 import { GlossaryProvider, useGlossary } from './hooks/useGlossary.jsx'
 import { applyTheme } from './hooks/useTheme.js'
+import { titleForPath } from './pageTitle.js'
 
 const ProfilePage = lazy(() => import('./pages/ProfilePage.jsx'))
 const StudentSessionsPage = lazy(() => import('./pages/StudentSessionsPage.jsx'))
@@ -29,7 +30,6 @@ const StaffMetricsPage = lazy(() => import('./pages/StaffMetricsPage.jsx'))
 const StaffSchedulePage = lazy(() => import('./pages/StaffSchedulePage.jsx'))
 const StaffBranchesPage = lazy(() => import('./pages/StaffBranchesPage.jsx'))
 const StaffTeacherLayout = lazy(() => import('./pages/StaffTeacherLayout.jsx'))
-const StaffClassCatalogPage = lazy(() => import('./pages/StaffClassCatalogPage.jsx'))
 const StaffCurriculumPage = lazy(() => import('./pages/StaffCurriculumPage.jsx'))
 const StaffCreateClassPage = lazy(() => import('./pages/StaffCreateClassPage.jsx'))
 const StaffClassRequestsPage = lazy(() => import('./pages/StaffClassRequestsPage.jsx'))
@@ -55,31 +55,54 @@ function PageLoader() {
   return <p className="page-intro">Loading…</p>
 }
 
-function MobileTopbar({ onOpen }) {
+function initials(name) {
+  const parts = String(name || '').trim().split(/[\s_.-]+/).filter(Boolean)
+  if (!parts.length) return '?'
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase()
+}
+
+function Topbar({ me, onOpenNav, onLogout }) {
   const { branding } = useBranding()
+  const { pathname } = useLocation()
+  const pageTitle = titleForPath(pathname)
+  const displayName = me?.display_name || me?.username || 'Account'
+  const roles = me?.roles || []
+
   return (
-    <header className="mobile-topbar">
-      <button type="button" className="mobile-nav-toggle" aria-label="Open menu" onClick={onOpen}>
+    <header className="topbar">
+      <button type="button" className="mobile-nav-toggle" aria-label="Open menu" onClick={onOpenNav}>
         <span className="mobile-nav-toggle-icon" aria-hidden="true" />
       </button>
-      <div className="mobile-topbar-brand">
+      <div className="topbar-brand">
         {branding.logo_url && (
           <img src={branding.logo_url} alt="" className="branding-logo branding-logo--sidebar" />
         )}
         <span>{branding.display_name}</span>
       </div>
+      {pageTitle && pageTitle !== 'Home' && (
+        <span className="topbar-page-title">{pageTitle}</span>
+      )}
+      <div className="topbar-spacer" />
+      <div className="topbar-actions">
+        <NavLink to="/profile" className="user-chip" title="Profile & settings">
+          <span className="user-avatar" aria-hidden="true">{initials(displayName)}</span>
+          <span className="user-chip-text">
+            <span className="user-chip-name">{displayName}</span>
+            {roles.length > 0 && <span className="user-chip-role">{roles.join(' · ')}</span>}
+          </span>
+        </NavLink>
+        <button type="button" className="secondary small" onClick={onLogout}>Log out</button>
+      </div>
     </header>
   )
 }
 
-function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
+function Sidebar({ me, onClose, collapsed, onToggleCollapse }) {
   const { label, labels } = useGlossary()
-  const { branding } = useBranding()
   const roles = me?.roles || []
   const isStudent = roles.includes('student')
   const isTeacher = roles.includes('teacher')
   const isStaff = roles.includes('staff')
-  const displayName = me?.display_name || me?.username || 'Account'
   const tp = me?.teacher_permissions
   const can = (key) => !tp || tp[key] !== false
   const canManageBlog = isStaff || (isTeacher && can('manage_blog'))
@@ -100,13 +123,6 @@ function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
           <span aria-hidden="true">{collapsed ? '›' : '‹'}</span>
         </button>
       </div>
-      <div className="brand">
-        {branding.logo_url && (
-          <img src={branding.logo_url} alt="" className="branding-logo branding-logo--sidebar" />
-        )}
-        <span>{branding.display_name}</span>
-      </div>
-
       <NavLink to="/" end className="nav-link">Home</NavLink>
       {canManageBlog && (
         <NavLink to="/blog/manage" className="nav-link">Blog posts</NavLink>
@@ -114,25 +130,25 @@ function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
 
       {isStudent && (
         <>
-          <div className="nav-section">{label('student')}</div>
+          <div className="nav-section">Learn</div>
+          <NavLink to="/curriculum" className="nav-link">My curriculum</NavLink>
           <NavLink to="/sessions" className="nav-link">Book a lesson</NavLink>
           <NavLink to="/sessions/request" className="nav-link">Request a class</NavLink>
           <NavLink to="/bookings" className="nav-link">My {labels('booking').toLowerCase()}</NavLink>
-          <NavLink to="/membership" className="nav-link">Membership</NavLink>
           <NavLink to="/progress" className="nav-link">My progress</NavLink>
           <NavLink to="/homework" className="nav-link">Homework</NavLink>
+          <NavLink to="/membership" className="nav-link">Membership</NavLink>
         </>
       )}
 
       {isStaff && (
         <>
-          <div className="nav-section">Staff</div>
+          <div className="nav-section">Studio</div>
           <NavLink to="/staff" end className="nav-link">Dashboard</NavLink>
           <NavLink to="/staff/schedule" className="nav-link">{label('studio')} schedule</NavLink>
           <NavLink to="/staff/branches" className="nav-link">Branches &amp; hours</NavLink>
           <NavLink to="/staff/requests" className="nav-link">Class requests</NavLink>
           <NavLink to="/staff/classes/new" className="nav-link">Create {label('class').toLowerCase()}</NavLink>
-          <NavLink to="/staff/class-catalog" className="nav-link">Class roadmap</NavLink>
           <NavLink to="/staff/curriculum" className="nav-link">Curriculum</NavLink>
           <NavLink to="/staff/students" className="nav-link">{labels('student')}</NavLink>
           <NavLink to="/staff/memberships" className="nav-link">Memberships</NavLink>
@@ -149,7 +165,7 @@ function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
 
       {isTeacher && (
         <>
-          <div className="nav-section">{label('teacher')}</div>
+          <div className="nav-section">Teach</div>
           <NavLink to="/teacher/sessions" className="nav-link">My {labels('session').toLowerCase()}</NavLink>
           <NavLink to="/teacher/requests" className="nav-link">Class requests</NavLink>
           {can('manage_schedule') && (
@@ -169,18 +185,7 @@ function Sidebar({ me, onLogout, onClose, collapsed, onToggleCollapse }) {
 
       <div className="nav-section">Account</div>
       <NavLink to="/inbox" className="nav-link">Inbox</NavLink>
-      <NavLink to="/curriculum" className="nav-link">Curriculum</NavLink>
-      <NavLink to="/profile" className="nav-link">Profile & settings</NavLink>
-
-      <div className="sidebar-footer">
-        <div className="sidebar-user">
-          {displayName}
-          {roles.map((role) => (
-            <span key={role}> · <span className="badge">{role}</span></span>
-          ))}
-        </div>
-        <button type="button" className="ghost" onClick={onLogout}>Log out</button>
-      </div>
+      <NavLink to="/profile" className="nav-link">Profile &amp; settings</NavLink>
     </aside>
   )
 }
@@ -215,8 +220,12 @@ function HomePage({ me }) {
 
   return (
     <div>
-      <h1>Welcome{me?.display_name ? `, ${me.display_name}` : ''}</h1>
-      <p className="page-intro">{intro()}</p>
+      <div className="page-header">
+        <div>
+          <h1>Welcome{me?.display_name ? `, ${me.display_name}` : ''}</h1>
+          <p className="page-intro">{intro()}</p>
+        </div>
+      </div>
 
       <BlogFeed canManage={canManageBlog} />
 
@@ -384,7 +393,7 @@ function AppRoutes() {
   return (
     <GlossaryProvider>
       <div className={`app-shell${navOpen ? ' nav-open' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-        <MobileTopbar onOpen={() => setNavOpen(true)} />
+        <Topbar me={me} onOpenNav={() => setNavOpen(true)} onLogout={handleLogout} />
         <button
           type="button"
           className="sidebar-backdrop"
@@ -394,7 +403,6 @@ function AppRoutes() {
         />
         <Sidebar
           me={me}
-          onLogout={handleLogout}
           onClose={() => setNavOpen(false)}
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebarCollapsed}
@@ -423,7 +431,7 @@ function AppRoutes() {
               <Route path="/staff/branches" element={<StaffBranchesPage />} />
               <Route path="/staff/requests" element={<StaffClassRequestsPage />} />
               <Route path="/staff/classes/new" element={<StaffCreateClassPage />} />
-              <Route path="/staff/class-catalog" element={<StaffClassCatalogPage />} />
+              <Route path="/staff/class-catalog" element={<Navigate to="/staff/curriculum" replace />} />
               <Route path="/staff/curriculum" element={<StaffCurriculumPage />} />
               <Route path="/staff/students" element={<StaffStudentsPage />} />
               <Route path="/staff/students/:studentId" element={<StaffStudentMembershipPage />} />

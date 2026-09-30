@@ -294,10 +294,14 @@ export default function MembershipPage() {
 
   return (
     <div>
-      <h1>Membership</h1>
-      <p className="page-intro">
-        Subscribe by subject, or buy individual tickets to top up an existing membership.
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>Membership</h1>
+          <p className="page-intro">
+            Subscribe by subject, or buy individual tickets to top up an existing membership.
+          </p>
+        </div>
+      </div>
       {activating && <div className="success">Activating your membership…</div>}
       {message && !activating && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}

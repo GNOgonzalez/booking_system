@@ -26,6 +26,10 @@ function profileKey(profile) {
   return `${profile.subject}::${profile.level}::${profile.focus}`
 }
 
+function lessonsOf(item) {
+  return (item?.modules?.length ? item.modules : item?.topics) || []
+}
+
 export default function StudentRequestClassPage() {
   const [teachers, setTeachers] = useState([])
   const [openClasses, setOpenClasses] = useState([])
@@ -166,7 +170,7 @@ export default function StudentRequestClassPage() {
     return classes.find((item) => String(item.id) === form.classOffering)
   }, [classes, openClasses, form.classOffering, isAnyTeacher])
 
-  const topicOptions = isAnyTeacher ? [] : (selectedClass?.topics || [])
+  const topicOptions = isAnyTeacher ? [] : lessonsOf(selectedClass)
   const minTickets = isAnyTeacher
     ? (selectedClass?.min_ticket_cost || 1)
     : (selectedClass?.ticket_cost || 1)
@@ -201,7 +205,7 @@ export default function StudentRequestClassPage() {
     }
 
     const picked = classes.find((item) => String(item.id) === classOffering)
-    const firstTopic = picked?.topics?.[0]
+    const firstTopic = lessonsOf(picked)[0]
     setSelectedSlotData(null)
     setForm((current) => ({
       ...current,
@@ -262,11 +266,14 @@ export default function StudentRequestClassPage() {
       throw new Error('That class is not offered by this teacher. Choose the class again.')
     }
     const pickedTeacher = teachers.find((item) => String(item.id) === form.teacher)
-    const pickedTopic = pickedClass.topics?.find((topic) => String(topic.id) === form.classTopic)
+    const pickedTopic = lessonsOf(pickedClass).find((topic) => String(topic.id) === form.classTopic)
+    const usesModules = Boolean(pickedClass.modules?.length)
     Object.assign(body, {
       teacher: Number(form.teacher),
       class_offering: offeringId,
-      class_topic: form.classTopic ? Number(form.classTopic) : null,
+      ...(usesModules
+        ? { curriculum_module: form.classTopic ? Number(form.classTopic) : null }
+        : { class_topic: form.classTopic ? Number(form.classTopic) : null }),
     })
     return {
       body,
@@ -412,7 +419,7 @@ export default function StudentRequestClassPage() {
               {' '}with {confirmPreview.preview.teacherLabel}?
             </p>
             {confirmPreview.preview.topicLabel && (
-              <p>Topic: {confirmPreview.preview.topicLabel}</p>
+              <p>Lesson: {confirmPreview.preview.topicLabel}</p>
             )}
             <p>
               {formatDateTime(confirmPreview.body.start_time)}
@@ -491,7 +498,7 @@ export default function StudentRequestClassPage() {
 
             {!isAnyTeacher && topicOptions.length > 0 && (
               <div className="field">
-                <label>Topic</label>
+                <label>Lesson</label>
                 <select
                   value={form.classTopic}
                   onChange={(e) => setForm({ ...form, classTopic: e.target.value })}

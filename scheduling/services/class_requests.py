@@ -16,7 +16,12 @@ from scheduling.services.membership import (
     has_active_membership,
 )
 from scheduling.services.notifications import notify_booking_created
-from scheduling.services.sessions import class_topic_belongs_to_offering, session_display_title
+from scheduling.services.classes import offering_visible_to_student, visible_offerings
+from scheduling.services.sessions import (
+    class_topic_belongs_to_offering,
+    module_belongs_to_offering,
+    session_display_title,
+)
 from scheduling.services.tickets import hold_tickets, release_tickets
 from scheduling.services.timezones import combine_in_teacher_tz
 
@@ -29,7 +34,7 @@ def _teacher_queryset():
 
 def _allowed_offerings_queryset(user):
     allowed_ids = allowed_class_ids_for_user(user)
-    qs = ClassOffering.objects.filter(is_active=True)
+    qs = visible_offerings(ClassOffering.objects.filter(is_active=True), user)
     if allowed_ids is not None:
         if not allowed_ids:
             return ClassOffering.objects.none()
@@ -102,7 +107,12 @@ def teachers_for_open_profile(user, subject, level, focus):
 
 def classes_for_teacher_request(user, teacher):
     allowed_ids = allowed_class_ids_for_user(user)
-    qs = ClassOffering.objects.filter(teacher=teacher, is_active=True).prefetch_related('topics')
+    qs = visible_offerings(
+        ClassOffering.objects.filter(teacher=teacher, is_active=True)
+        .select_related('track')
+        .prefetch_related('topics', 'track__modules'),
+        user,
+    )
     if allowed_ids is not None:
         qs = qs.filter(pk__in=allowed_ids)
     return qs.order_by('subject', 'level', 'focus')
@@ -285,6 +295,7 @@ def create_class_request(
     teacher,
     class_offering,
     class_topic=None,
+    curriculum_module=None,
     start_time,
     end_time,
     tickets_requested,
@@ -299,8 +310,12 @@ def create_class_request(
         return None, 'That class is not offered by this teacher.'
     if not class_offering.is_active:
         return None, 'That class is no longer available.'
+    if not offering_visible_to_student(class_offering, user):
+        return None, 'This is a personalized curriculum. Ask your teacher to enroll you first.'
     if class_topic is not None and not class_topic_belongs_to_offering(class_topic.id, class_offering):
         return None, 'Topic not found in this class.'
+    if curriculum_module is not None and not module_belongs_to_offering(curriculum_module.id, class_offering):
+        return None, 'That lesson is not on this curriculum.'
     min_tickets = class_offering.ticket_cost or 1
     if tickets_requested < min_tickets:
         return None, f'At least {min_tickets} ticket(s) required for this class.'
@@ -330,6 +345,7 @@ def create_class_request(
         teacher=teacher,
         class_offering=class_offering,
         class_topic=class_topic,
+        curriculum_module=curriculum_module,
         start_time=start_time,
         end_time=end_time,
         tickets_requested=tickets_requested,
@@ -500,12 +516,13 @@ def approve_class_request(teacher, request, *, capacity=None):
         return None, error
 
     offering = request.class_offering
-    topic = request.class_topic
+    lesson = request.curriculum_module or request.class_topic
     session = Session.objects.create(
         teacher=teacher,
         class_offering=offering,
-        class_topic=topic,
-        title=session_display_title(offering, topic),
+        class_topic=request.class_topic,
+        curriculum_module=request.curriculum_module,
+        title=session_display_title(offering, lesson),
         start_time=request.start_time,
         end_time=request.end_time,
         capacity=capacity or offering.default_capacity or 1,
@@ -550,7 +567,7 @@ def pending_requests_for_teacher(teacher):
     all_ids = list(specific_ids | set(open_ids))
     return (
         ClassRequest.objects.filter(pk__in=all_ids)
-        .select_related('student', 'class_offering', 'class_topic', 'membership')
+        .select_related('student', 'class_offering', 'class_topic', 'curriculum_module', 'membership')
     )
 
 
@@ -563,7 +580,7 @@ def pending_requests_studio():
     """
     return (
         ClassRequest.objects.filter(status=ClassRequest.STATUS_PENDING)
-        .select_related('student', 'teacher', 'class_offering', 'class_topic', 'membership')
+        .select_related('student', 'teacher', 'class_offering', 'class_topic', 'curriculum_module', 'membership')
         .order_by('start_time')
     )
 
@@ -597,5 +614,5 @@ def requests_for_student(user):
     return (
         ClassRequest.objects.filter(student=user)
         .exclude(status=ClassRequest.STATUS_DENIED)
-        .select_related('teacher', 'class_offering', 'class_topic', 'session')
+        .select_related('teacher', 'class_offering', 'class_topic', 'curriculum_module', 'session')
     )

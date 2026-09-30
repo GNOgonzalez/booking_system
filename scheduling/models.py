@@ -68,6 +68,14 @@ class ClassOffering(models.Model):
         default=False,
         help_text='When enabled, topics are meant to be taught in sort order.',
     )
+    track = models.ForeignKey(
+        'CurriculumTrack',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='offerings',
+        help_text='The curriculum this teacher teaches. Subject, level, and focus are cached from it.',
+    )
     default_capacity = models.PositiveIntegerField(default=4)
     ticket_cost = models.PositiveIntegerField(
         default=1,
@@ -86,10 +94,17 @@ class ClassOffering(models.Model):
                 fields=['teacher', 'subject', 'level', 'focus'],
                 name='unique_class_offering_per_teacher',
             ),
+            models.UniqueConstraint(
+                fields=['teacher', 'track'],
+                condition=models.Q(track__isnull=False),
+                name='unique_class_offering_per_teacher_track',
+            ),
         ]
 
     @property
     def display_name(self):
+        if self.track_id:
+            return self.track.title
         return f"{self.subject} · {self.level} · {self.focus}"
 
     def __str__(self):
@@ -356,6 +371,14 @@ class Session(models.Model):
         blank=True,
         related_name='sessions',
     )
+    curriculum_module = models.ForeignKey(
+        'CurriculumModule',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='sessions',
+        help_text='The lesson this session teaches, from the class track.',
+    )
     title = models.CharField(max_length=200)
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
@@ -474,6 +497,13 @@ class ClassRequest(models.Model):
     class_topic = models.ForeignKey(
         ClassTopic,
         on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='class_requests',
+    )
+    curriculum_module = models.ForeignKey(
+        'CurriculumModule',
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='class_requests',

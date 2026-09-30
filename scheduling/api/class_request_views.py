@@ -14,7 +14,7 @@ from scheduling.api.serializers import (
     OpenClassProfileSerializer,
     TeacherRequestOptionSerializer,
 )
-from scheduling.models import ClassOffering, ClassRequest, ClassTopic
+from scheduling.models import ClassOffering, ClassRequest, ClassTopic, CurriculumModule
 from scheduling.services.class_requests import (
     approve_class_request,
     availability_snapshot,
@@ -194,11 +194,18 @@ class StudentClassRequestListCreateView(APIView):
             topic = ClassTopic.objects.filter(pk=topic_id, class_offering=offering).first()
             if topic is None:
                 return Response({'detail': 'Topic not found.'}, status=status.HTTP_404_NOT_FOUND)
+        module = None
+        module_id = data.get('curriculum_module')
+        if module_id:
+            module = CurriculumModule.objects.filter(pk=module_id).first()
+            if module is None:
+                return Response({'detail': 'Lesson not found on this curriculum.'}, status=status.HTTP_404_NOT_FOUND)
         created, error = create_class_request(
             request.user,
             teacher=teacher,
             class_offering=offering,
             class_topic=topic,
+            curriculum_module=module,
             start_time=data['start_time'],
             end_time=data['end_time'],
             tickets_requested=data['tickets_requested'],

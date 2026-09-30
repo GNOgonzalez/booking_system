@@ -194,10 +194,13 @@ def place_branch_class(
     start_time,
     end_time,
     class_topic=None,
+    curriculum_module=None,
     capacity=None,
     accepts_walk_ins=False,
 ):
     """Create a class inside branch hours. Returns (session, error)."""
+    from scheduling.services.sessions import module_belongs_to_offering
+
     if branch is None or not branch.is_active:
         return None, 'That branch is not open.'
     if teacher is None or not teacher.is_active:
@@ -206,6 +209,8 @@ def place_branch_class(
         return None, 'Class not found in that teacher’s catalog.'
     if class_topic is not None and not class_topic_belongs_to_offering(class_topic.id, class_offering):
         return None, 'Topic not found in this class.'
+    if curriculum_module is not None and not module_belongs_to_offering(curriculum_module.id, class_offering):
+        return None, 'That lesson is not on this curriculum.'
     if start_time is None or end_time is None or end_time <= start_time:
         return None, 'End time must be after start time.'
     if not session_within_branch_hours(branch, start_time, end_time):
@@ -224,7 +229,8 @@ def place_branch_class(
         teacher=teacher,
         class_offering=class_offering,
         class_topic=class_topic,
-        title=session_display_title(class_offering, class_topic),
+        curriculum_module=curriculum_module,
+        title=session_display_title(class_offering, curriculum_module or class_topic),
         start_time=start_time,
         end_time=end_time,
         capacity=capacity,
@@ -245,7 +251,11 @@ def set_walk_ins(session, allowed):
 
 
 def teacher_offerings(teacher):
-    return ClassOffering.objects.filter(teacher=teacher, is_active=True).prefetch_related('topics')
+    return (
+        ClassOffering.objects.filter(teacher=teacher, is_active=True)
+        .select_related('track')
+        .prefetch_related('topics', 'track__modules')
+    )
 
 
 def serialize_hours(branch):

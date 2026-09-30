@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api.js'
 import BookingSuccessModal from '../components/BookingSuccessModal.jsx'
+import PageHeader from '../components/PageHeader.jsx'
 import SessionCalendar from '../components/SessionCalendar.jsx'
 import StudentTodayBoard from '../components/StudentTodayBoard.jsx'
 
@@ -89,14 +90,18 @@ export default function StudentSessionsPage() {
 
   return (
     <div className="page-calendar">
-      <h1>Book a lesson</h1>
-      <p className="page-intro">
-        Browse upcoming lessons on the calendar. Filter by class, teacher, or time of day, or switch to list view.
-        Or <Link to="/sessions/request">request a custom time</Link> inside a teacher&apos;s availability.
-        {ticketsRemaining != null && (
-          <> You have <strong>{ticketsRemaining}</strong> booking ticket{ticketsRemaining === 1 ? '' : 's'} across your memberships.</>
-        )}
-      </p>
+      <PageHeader
+        title="Book a lesson"
+        intro={
+          <>
+            Browse upcoming lessons, or <Link to="/sessions/request">request a custom time</Link>.
+            {ticketsRemaining != null && (
+              <> You have <strong>{ticketsRemaining}</strong>
+              {ticketsRemaining === 1 ? ' ticket' : ' tickets'} left.</>
+            )}
+          </>
+        }
+      />
       {error && <div className="error">{error}</div>}
       {loading ? (
         <div className="empty" style={{ marginTop: '1rem' }}>Loading open sessions…</div>

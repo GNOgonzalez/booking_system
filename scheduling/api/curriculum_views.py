@@ -30,6 +30,7 @@ from scheduling.services.curriculum import (
     enroll_student_on_template,
     get_active_enrollment,
     get_track,
+    list_schedulable_tracks,
     list_staff_tracks,
     list_templates,
     serialize_enrollment,
@@ -96,6 +97,15 @@ class CurriculumTemplateListView(APIView):
     def get(self, request):
         tracks = list_templates()
         return Response([serialize_track(track) for track in tracks])
+
+
+class CurriculumTrackListView(APIView):
+    """Active studio templates and personalized tracks, for attaching a class."""
+
+    permission_classes = [IsTeacherOrStaff]
+
+    def get(self, request):
+        return Response([serialize_track(track) for track in list_schedulable_tracks()])
 
 
 class StaffCurriculumTrackListCreateView(APIView):

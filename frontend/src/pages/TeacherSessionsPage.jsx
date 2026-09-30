@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiFetch } from '../api.js'
 import { useTeacherScope } from '../hooks/useTeacherScope.js'
 import { useTeacherPermissions } from '../hooks/useTeacherPermissions.js'
+import PageHeader from '../components/PageHeader.jsx'
 import SessionCalendar from '../components/SessionCalendar.jsx'
 import TeacherBranchPanel from '../components/TeacherBranchPanel.jsx'
 
@@ -27,9 +28,11 @@ export default function TeacherSessionsPage() {
 
   return (
     <div className={isStaff ? '' : 'page-calendar'}>
-      {!isStaff && <h1>My sessions</h1>}
       {!isStaff && (
-        <p className="page-intro">Your teaching schedule. Filter by student or class, or switch to list view.</p>
+        <PageHeader
+          title="My sessions"
+          intro="Your teaching schedule. Filter by student or class, or switch to list view."
+        />
       )}
       {error && <div className="error">{error}</div>}
       {!isStaff && (

@@ -24,6 +24,10 @@ def booking_block_reason(user, session):
         return 'Only students can book sessions.'
     if not has_active_membership(user):
         return 'An active membership is required to book.'
+    from scheduling.services.classes import offering_visible_to_student
+
+    if session.class_offering_id and not offering_visible_to_student(session.class_offering, user):
+        return 'This is a personalized curriculum. Ask your teacher to enroll you first.'
     membership = membership_for_booking(user, session)
     if membership is None:
         from scheduling.services.membership import (

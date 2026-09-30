@@ -11,6 +11,7 @@ from scheduling.models import (
     AvailabilityBlock,
     Booking,
     ClassOffering,
+    ClassRequest,
     ClassTopic,
     CurriculumItem,
     CurriculumTrack,
@@ -204,8 +205,18 @@ class Command(BaseCommand):
         for student in students:
             self._ensure_booking(student, session)
 
+    def _clear_demo_memberships(self, demo_students):
+        """Drop sandbox memberships. ClassRequest.membership is PROTECT, so drop those first."""
+        memberships = Membership.objects.filter(user__in=demo_students)
+        ClassRequest.objects.filter(membership__in=memberships).delete()
+        ClassRequest.objects.filter(student__in=demo_students).delete()
+        memberships.delete()
+
     def _reset_demo_seed(self):
-        deleted, _ = User.objects.filter(username__in=self.DEMO_USERNAMES).delete()
+        demo_users = User.objects.filter(username__in=self.DEMO_USERNAMES)
+        ClassRequest.objects.filter(student__in=demo_users).delete()
+        ClassRequest.objects.filter(teacher__in=demo_users).delete()
+        deleted, _ = demo_users.delete()
         CurriculumItem.objects.filter(title='Welcome to the studio').delete()
         Message.objects.filter(subject='Welcome').delete()
         self.stdout.write(f'Removed demo seed data ({deleted} related rows).')
@@ -274,7 +285,7 @@ class Command(BaseCommand):
         student_4 = self._ensure_demo_student('demo_student_4', 'jordan@example.com')
         demo_students = (student, student_2, student_3, student_4)
         # No pre-granted membership — students purchase via mock checkout or Stripe in dev.
-        Membership.objects.filter(user__in=demo_students).delete()
+        self._clear_demo_memberships(demo_students)
 
         # Teacher class catalog — session titles come from this list.
         catalog = {

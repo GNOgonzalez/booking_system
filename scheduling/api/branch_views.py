@@ -26,7 +26,7 @@ from scheduling.services.branches import (
     teacher_offerings,
 )
 from scheduling.services.membership import allowed_class_ids_for_user
-from scheduling.services.sessions import sessions_for_list
+from scheduling.services.sessions import sessions_for_list, visible_open_sessions
 from scheduling.services.staff import get_teacher
 from scheduling.services.teacher_permissions import permission_denied_response, teacher_can, user_is_staff
 
@@ -50,11 +50,17 @@ def _parse_dt(raw):
 
 
 def _offering_payload(offering):
+    modules = []
+    if offering.track_id:
+        modules = [{'id': m.id, 'title': m.title} for m in offering.track.modules.all()]
     return {
         'id': offering.id,
         'label': offering.display_name,
         'default_capacity': offering.default_capacity,
-        'topics': [{'id': t.id, 'title': t.title} for t in offering.topics.all()],
+        'topics': modules,
+        'modules': modules,
+        'track_id': offering.track_id,
+        'is_personalized': bool(offering.track_id and not offering.track.is_template),
     }
 
 
@@ -67,6 +73,12 @@ def _place_from_request(request, branch, teacher):
         topic = ClassTopic.objects.filter(pk=data.get('class_topic_id')).first()
         if topic is None:
             return Response({'detail': 'Topic not found in this class.'}, status=status.HTTP_400_BAD_REQUEST)
+    module = None
+    if data.get('curriculum_module_id'):
+        from scheduling.models import CurriculumModule
+        module = CurriculumModule.objects.filter(pk=data.get('curriculum_module_id')).first()
+        if module is None:
+            return Response({'detail': 'Lesson not found on this curriculum.'}, status=status.HTTP_400_BAD_REQUEST)
     start = _parse_dt(data.get('start_time'))
     end = _parse_dt(data.get('end_time'))
     if start is None or end is None:
@@ -76,6 +88,7 @@ def _place_from_request(request, branch, teacher):
         teacher=teacher,
         class_offering=offering,
         class_topic=topic,
+        curriculum_module=module,
         start_time=start,
         end_time=end,
         capacity=data.get('capacity'),
@@ -269,6 +282,7 @@ class StudentTodayView(APIView):
             )
             if allowed_ids is not None:
                 qs = qs.filter(class_offering_id__in=allowed_ids) if allowed_ids else qs.none()
+            qs = visible_open_sessions(qs, request.user)
             classes = sessions_for_list(qs).annotate(student_booked=Exists(booked))
             rows.append({
                 **serialize_branch(branch),

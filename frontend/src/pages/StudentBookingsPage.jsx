@@ -82,10 +82,14 @@ export default function StudentBookingsPage() {
 
   return (
     <div className="page-calendar">
-      <h1>My bookings</h1>
-      <p className="page-intro">
-        Your lessons in calendar view. Click a session to see details or cancel an upcoming booking.
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>My bookings</h1>
+          <p className="page-intro">
+            Your lessons in calendar view. Click a session to see details or cancel an upcoming booking.
+          </p>
+        </div>
+      </div>
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
 

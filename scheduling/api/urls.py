@@ -181,6 +181,11 @@ urlpatterns = [
         curriculum_views.CurriculumTemplateListView.as_view(),
         name='api_curriculum_templates',
     ),
+    path(
+        'curriculum/tracks/',
+        curriculum_views.CurriculumTrackListView.as_view(),
+        name='api_curriculum_tracks',
+    ),
     path('curriculum/', views.CurriculumListView.as_view(), name='api_curriculum'),
     path('membership/', views.MembershipView.as_view(), name='api_membership'),
     path('membership/plans/', views.MembershipPlanCatalogView.as_view(), name='api_membership_plans'),

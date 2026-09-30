@@ -10,6 +10,8 @@ from scheduling.models import (
     ClassRequest,
     ClassTopic,
     CurriculumItem,
+    CurriculumModule,
+    CurriculumTrack,
     Membership,
     MembershipPlan,
     Message,
@@ -17,9 +19,9 @@ from scheduling.models import (
     Session,
     SpecialAvailability,
 )
-from scheduling.services.classes import sync_class_topics
+from scheduling.services.classes import apply_track_to_offering, sync_class_topics
 from scheduling.services.llm import ai_available_for_user
-from scheduling.services.sessions import session_display_title
+from scheduling.services.sessions import module_belongs_to_offering, session_display_title
 from scheduling.services.teacher_permissions import permissions_for_teacher
 
 User = get_user_model()
@@ -36,6 +38,13 @@ class SessionSerializer(serializers.ModelSerializer):
     class_topic_id = serializers.PrimaryKeyRelatedField(
         queryset=ClassTopic.objects.all(),
         source='class_topic',
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
+    curriculum_module_id = serializers.PrimaryKeyRelatedField(
+        queryset=CurriculumModule.objects.all(),
+        source='curriculum_module',
         required=False,
         allow_null=True,
         write_only=True,
@@ -58,6 +67,8 @@ class SessionSerializer(serializers.ModelSerializer):
             'accepts_walk_ins',
             'class_offering',
             'class_topic_id',
+            'curriculum_module_id',
+            'curriculum_module',
             'class_offering_label',
             'class_subject',
             'class_level',
@@ -77,10 +88,12 @@ class SessionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'status', 'meeting_url', 'title', 'teacher', 'meeting_provider_display',
-            'branch', 'branch_name',
+            'branch', 'branch_name', 'curriculum_module',
         ]
 
     def get_class_topic(self, obj):
+        if obj.curriculum_module_id:
+            return obj.curriculum_module.title
         if obj.class_topic_id:
             return obj.class_topic.title
         return None
@@ -127,23 +140,29 @@ class SessionSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         offering = attrs.get('class_offering') or getattr(self.instance, 'class_offering', None)
         topic = attrs.get('class_topic')
+        module = attrs.get('curriculum_module')
         if topic is not None and offering is not None and topic.class_offering_id != offering.id:
             raise serializers.ValidationError({'class_topic_id': 'Topic does not belong to this class.'})
+        if module is not None and offering is not None and not module_belongs_to_offering(module.id, offering):
+            raise serializers.ValidationError({'curriculum_module_id': 'That lesson is not on this curriculum.'})
         return attrs
 
     def create(self, validated_data):
         offering = validated_data['class_offering']
-        topic = validated_data.get('class_topic')
-        validated_data['title'] = session_display_title(offering, topic)
+        lesson = validated_data.get('curriculum_module') or validated_data.get('class_topic')
+        validated_data['title'] = session_display_title(offering, lesson)
         if validated_data.get('capacity') in (None, 0):
             validated_data['capacity'] = offering.default_capacity
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
         offering = validated_data.get('class_offering', instance.class_offering)
-        topic = validated_data.get('class_topic', instance.class_topic)
+        lesson = validated_data.get(
+            'curriculum_module',
+            instance.curriculum_module,
+        ) or validated_data.get('class_topic', instance.class_topic)
         if offering is not None:
-            validated_data['title'] = session_display_title(offering, topic)
+            validated_data['title'] = session_display_title(offering, lesson)
         return super().update(instance, validated_data)
 
 
@@ -204,7 +223,7 @@ class ClassRequestSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.username', read_only=True)
     teacher_name = serializers.SerializerMethodField()
     class_offering_label = serializers.SerializerMethodField()
-    class_topic_title = serializers.CharField(source='class_topic.title', read_only=True, default=None)
+    class_topic_title = serializers.SerializerMethodField()
     session_id = serializers.IntegerField(source='session.id', read_only=True, default=None)
     class_profile_label = serializers.SerializerMethodField()
 
@@ -225,6 +244,7 @@ class ClassRequestSerializer(serializers.ModelSerializer):
             'class_offering_label',
             'class_topic',
             'class_topic_title',
+            'curriculum_module',
             'start_time',
             'end_time',
             'tickets_requested',
@@ -237,6 +257,7 @@ class ClassRequestSerializer(serializers.ModelSerializer):
             'student',
             'status',
             'session_id',
+            'curriculum_module',
             'created_at',
             'updated_at',
         ]
@@ -256,12 +277,20 @@ class ClassRequestSerializer(serializers.ModelSerializer):
             return obj.class_offering.display_name
         return obj.class_profile_label
 
+    def get_class_topic_title(self, obj):
+        if obj.curriculum_module_id:
+            return obj.curriculum_module.title
+        if obj.class_topic_id:
+            return obj.class_topic.title
+        return None
+
 
 class ClassRequestCreateSerializer(serializers.Serializer):
     teacher = serializers.IntegerField(required=False, allow_null=True)
     open_to_any_teacher = serializers.BooleanField(required=False, default=False)
     class_offering = serializers.IntegerField(required=False, allow_null=True)
     class_topic = serializers.IntegerField(required=False, allow_null=True)
+    curriculum_module = serializers.IntegerField(required=False, allow_null=True)
     subject = serializers.CharField(required=False, allow_blank=True)
     level = serializers.CharField(required=False, allow_blank=True)
     focus = serializers.CharField(required=False, allow_blank=True)
@@ -339,28 +368,54 @@ class ClassTopicSerializer(serializers.ModelSerializer):
 class ClassOfferingSerializer(serializers.ModelSerializer):
     label = serializers.CharField(source='display_name', read_only=True)
     topics = ClassTopicSerializer(many=True, required=False)
+    track = serializers.PrimaryKeyRelatedField(
+        queryset=CurriculumTrack.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+    )
+    track_title = serializers.CharField(source='track.title', read_only=True, default=None)
+    is_personalized = serializers.SerializerMethodField()
+    modules = serializers.SerializerMethodField()
 
     class Meta:
         model = ClassOffering
         fields = [
             'id',
+            'track',
+            'track_title',
+            'is_personalized',
             'subject',
             'level',
             'focus',
             'topics_ordered',
             'topics',
+            'modules',
             'label',
             'default_capacity',
             'ticket_cost',
             'is_active',
         ]
-        read_only_fields = ['label']
+        read_only_fields = ['label', 'track_title', 'is_personalized', 'modules']
+        extra_kwargs = {
+            'subject': {'required': False},
+            'level': {'required': False},
+            'focus': {'required': False},
+        }
+
+    def get_is_personalized(self, obj):
+        return bool(obj.track_id and not obj.track.is_template)
+
+    def get_modules(self, obj):
+        if not obj.track_id:
+            return []
+        return [
+            {'id': module.id, 'title': module.title, 'sort_order': module.sort_order}
+            for module in obj.track.modules.all()
+        ]
 
     def validate_topics(self, value):
-        if self.instance is None and not value:
-            raise serializers.ValidationError('Add at least one topic.')
         cleaned = []
-        for index, item in enumerate(value):
+        for index, item in enumerate(value or []):
             title = (item.get('title') or '').strip()
             if not title:
                 continue
@@ -369,20 +424,32 @@ class ClassOfferingSerializer(serializers.ModelSerializer):
                 'title': title,
                 'sort_order': item.get('sort_order', index),
             })
-        if self.instance is None and not cleaned:
-            raise serializers.ValidationError('Add at least one topic.')
         return cleaned
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get('track') and not attrs.get('topics'):
+            raise serializers.ValidationError({'track': 'Choose a curriculum.'})
+        return attrs
 
     def create(self, validated_data):
         topics_data = validated_data.pop('topics', [])
+        track = validated_data.pop('track', None)
         validated_data['teacher'] = self.context.get('acting_teacher') or self.context['request'].user
-        offering = ClassOffering.objects.create(**validated_data)
-        sync_class_topics(offering, topics_data)
+        offering = ClassOffering(**validated_data)
+        if track is not None:
+            apply_track_to_offering(offering, track)
+        offering.save()
+        if topics_data:
+            sync_class_topics(offering, topics_data)
         return offering
 
     def update(self, instance, validated_data):
         topics_data = validated_data.pop('topics', None)
+        track = validated_data.pop('track', None)
         offering = super().update(instance, validated_data)
+        if track is not None:
+            apply_track_to_offering(offering, track)
+            offering.save()
         if topics_data is not None:
             sync_class_topics(offering, topics_data)
         return offering

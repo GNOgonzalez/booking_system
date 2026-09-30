@@ -298,10 +298,14 @@ export default function StudentProgressPage() {
 
   return (
     <div>
-      <h1>My progress</h1>
-      <p className="page-intro">
-        Track your skill ratings and see every class you have taken, organized by subject.
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>My progress</h1>
+          <p className="page-intro">
+            Track your skill ratings and see every class you have taken, organized by subject.
+          </p>
+        </div>
+      </div>
       {error && <div className="error">{error}</div>}
 
       {sections.length > 1 && (

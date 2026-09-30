@@ -131,7 +131,7 @@ docs/adaptive-curriculum.md  CEFR path, suggestion rules, AI layer
 |--------|------|------|
 | GET/POST | `teacher/sessions/` | teacher |
 | PATCH/DELETE | `teacher/sessions/<id>/` | teacher |
-| GET/POST | `teacher/classes/` | teacher (+ `manage_classes`) |
+| GET/POST | `teacher/classes/` | teacher (+ `manage_classes`; POST `{track, default_capacity, ticket_cost}`) |
 | PATCH | `teacher/classes/<id>/` | teacher |
 | GET/POST | `teacher/availability/` | teacher (+ `manage_availability`) |
 | PATCH/DELETE | `teacher/availability/<id>/` | teacher |
@@ -183,12 +183,13 @@ docs/adaptive-curriculum.md  CEFR path, suggestion rules, AI layer
 | GET/POST | `curriculum/me/` | student |
 | GET | `curriculum/me/supplementary/` (accepted extra practice) | student |
 | GET | `curriculum/templates/` | authenticated |
+| GET | `curriculum/tracks/` | teacher/staff (studio + personalized paths for class create) |
 | GET/PATCH | `staff/llm/` | staff |
 | POST | `staff/llm/test/` | staff |
 | POST | `teacher/ai/suggest-feedback/` | teacher (+ `use_ai`) |
 | GET | `teacher/ai/status/` | teacher/staff |
-| POST | `staff/classes/` | staff |
-| GET/PATCH/DELETE | `staff/class-catalog/<kind>/<id>/` (rename / hide / delete roadmap entry) | staff |
+| POST | `staff/classes/` | staff (`track` = CurriculumTrack; sessions pick a module) |
+| GET/PATCH/DELETE | `staff/class-catalog/<kind>/<id>/` | staff (legacy catalog API; UI uses curriculum) |
 | `staff/teachers/<id>/sessions|classes|availability|permissions/…` | staff |
 
 ### Shared

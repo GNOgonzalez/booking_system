@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch, getMe } from '../api.js'
 
@@ -8,11 +8,18 @@ function statusLabel(status) {
   return 'Upcoming'
 }
 
+function statusClass(module) {
+  if (module.status === 'completed') return 'done'
+  if (module.is_current) return 'current'
+  return 'upcoming'
+}
+
 export default function CurriculumPage() {
   const [me, setMe] = useState(null)
   const [enrollment, setEnrollment] = useState(undefined)
   const [templates, setTemplates] = useState([])
   const [supplementary, setSupplementary] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -46,11 +53,18 @@ export default function CurriculumPage() {
         body: JSON.stringify({ track_id: trackId }),
       })
       setEnrollment(result.enrollment)
+      setSelectedId(null)
       setMessage('You are on this curriculum.')
     } catch (err) {
       setError(err.message)
     }
   }
+
+  const modules = useMemo(() => enrollment?.track?.modules || [], [enrollment])
+  const current = modules.find((module) => module.is_current) || modules[0] || null
+  const selected = modules.find((module) => module.id === selectedId) || current
+  const doneCount = modules.filter((module) => module.status === 'completed').length
+  const percent = modules.length ? Math.round((doneCount / modules.length) * 100) : 0
 
   const roles = me?.roles || []
   const isStudent = roles.includes('student')
@@ -64,72 +78,151 @@ export default function CurriculumPage() {
     return <Navigate to="/staff/curriculum" replace />
   }
 
-  const modules = enrollment?.track?.modules || []
-
   return (
     <div>
-      <h1>Curriculum</h1>
-      <p className="page-intro">
-        Follow a studio path in order. Your teacher can skip a module or assign a custom plan.
-      </p>
+      <div className="page-header">
+        <div>
+          <h1>My curriculum</h1>
+          <p className="page-intro">
+            Work through your path in order. Your teacher can skip a module or add extra practice.
+          </p>
+        </div>
+      </div>
+
       {message && <div className="success">{message}</div>}
       {error && <div className="error">{error}</div>}
 
-      {enrollment && (
-        <div className="card">
-          <div className="card-title">{enrollment.track.title}</div>
-          {enrollment.track.description && <p className="card-meta">{enrollment.track.description}</p>}
-          {modules.map((module) => (
-            <div
-              key={module.id}
-              className={`card${module.is_current ? ' curriculum-module--current' : ''}`}
-            >
-              <div className="card-title">
-                {module.cefr_level && <><span className="badge">{module.cefr_level}</span> </>}
-                {module.title}
-              </div>
-              <div className="card-meta">
-                {statusLabel(module.status)}
-                {module.is_current ? ' · Current' : ''}
-              </div>
-              {module.content && <p>{module.content}</p>}
+      {enrollment && current && (
+        <div className="hero-card">
+          <div className="hero-body">
+            <div className="hero-eyebrow">
+              {doneCount ? 'Continue where you left off' : 'Start here'}
             </div>
-          ))}
+            <div className="hero-title">
+              {current.cefr_level && <><span className="badge">{current.cefr_level}</span>{' '}</>}
+              {current.title}
+            </div>
+            <div className="card-meta">{enrollment.track.title}</div>
+            <div className="progress-row" style={{ marginTop: '0.75rem' }}>
+              <span className="progress">
+                <span
+                  className={`progress-fill${percent === 100 ? ' progress-fill--done' : ''}`}
+                  style={{ width: `${percent}%` }}
+                />
+              </span>
+              <span className="progress-value">{doneCount} of {modules.length} done</span>
+            </div>
+          </div>
+          {selected?.id !== current.id && (
+            <button type="button" onClick={() => setSelectedId(current.id)}>Open this module</button>
+          )}
+        </div>
+      )}
+
+      {enrollment && (
+        <div className="course-layout">
+          <aside className="card course-outline">
+            <div className="section-head">
+              <h3>{enrollment.track.title}</h3>
+            </div>
+            {enrollment.track.description && (
+              <p className="card-meta">{enrollment.track.description}</p>
+            )}
+            <ol className="module-list">
+              {modules.map((module, index) => (
+                <li key={module.id}>
+                  <button
+                    type="button"
+                    className={`module-item module-item--${statusClass(module)}${
+                      selected?.id === module.id ? ' module-item--selected' : ''
+                    }`}
+                    onClick={() => setSelectedId(module.id)}
+                  >
+                    <span className={`status-dot status-dot--${statusClass(module)}`} aria-hidden="true" />
+                    <span className="module-item-text">
+                      <span className="module-title">{index + 1}. {module.title}</span>
+                      <span className="card-meta">
+                        {module.cefr_level ? `${module.cefr_level} · ` : ''}
+                        {statusLabel(module.status)}
+                        {module.is_current ? ' · Current' : ''}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+            {!modules.length && <p className="empty">This path has no modules yet.</p>}
+          </aside>
+
+          <section className="card course-lesson">
+            {selected ? (
+              <>
+                <div className="section-head">
+                  <h2>{selected.title}</h2>
+                  <span className={`badge${selected.status === 'completed' ? ' badge--success' : ''}`}>
+                    {statusLabel(selected.status)}
+                  </span>
+                </div>
+                {selected.cefr_level && (
+                  <p className="card-meta">CEFR level {selected.cefr_level}</p>
+                )}
+                {selected.content
+                  ? <p className="lesson-body">{selected.content}</p>
+                  : <p className="card-meta">Your teacher will cover this in your next lesson.</p>}
+              </>
+            ) : (
+              <p className="empty">Pick a module to see what it covers.</p>
+            )}
+          </section>
         </div>
       )}
 
       {supplementary.length > 0 && (
         <div className="card">
-          <div className="card-title">Extra practice from your teacher</div>
+          <div className="section-head">
+            <h2>Extra practice from your teacher</h2>
+          </div>
           <p className="card-meta">Added alongside your main path to strengthen specific skills.</p>
-          {supplementary.map((item) => (
-            <div key={item.id} className="card">
-              <div className="card-title">
-                {item.module?.cefr_level && <><span className="badge">{item.module.cefr_level}</span> </>}
-                {item.title}
-              </div>
-              {item.content && <p>{item.content}</p>}
-            </div>
-          ))}
+          <ul className="module-list" style={{ marginTop: '0.75rem' }}>
+            {supplementary.map((item) => (
+              <li key={item.id} className="module-item">
+                <span className="status-dot" aria-hidden="true" />
+                <span className="module-item-text">
+                  <span className="module-title">
+                    {item.module?.cefr_level && <><span className="badge">{item.module.cefr_level}</span>{' '}</>}
+                    {item.title}
+                  </span>
+                  {item.content && <span className="card-meta">{item.content}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
       {enrollment === null && (
         <>
-          <h2>Choose a path</h2>
-          {!templates.length && (
+          <div className="section-head">
+            <h2>Choose a path</h2>
+          </div>
+          {!templates.length ? (
             <p className="empty">
               No premade curricula yet. Ask staff to publish one, or wait for your teacher to assign a custom plan.
             </p>
-          )}
-          {templates.map((track) => (
-            <div key={track.id} className="card">
-              <div className="card-title">{track.title}</div>
-              {track.description && <p className="card-meta">{track.description}</p>}
-              <div className="card-meta">{track.module_count} modules</div>
-              <button type="button" onClick={() => pickTemplate(track.id)}>Start this curriculum</button>
+          ) : (
+            <div className="course-grid">
+              {templates.map((track) => (
+                <div key={track.id} className="course-card">
+                  <div className="course-card-title">{track.title}</div>
+                  {track.description && <p className="card-meta">{track.description}</p>}
+                  <div className="card-meta">{track.module_count} modules</div>
+                  <div className="course-card-foot">
+                    <button type="button" onClick={() => pickTemplate(track.id)}>Start this curriculum</button>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </>
       )}
 

@@ -2286,6 +2286,30 @@ class ShowcaseSeedTests(TestCase):
         self.assertTrue(staff.is_superuser)
         self.assertTrue(staff.is_staff)
 
+    def test_demo_reseed_clears_memberships_held_by_class_requests(self):
+        from django.core.management import call_command
+
+        call_command('bootstrap_sandbox', '--demo', '--showcase')
+        student = User.objects.get(username='demo_student')
+        teacher = User.objects.get(username='demo_teacher')
+        membership = Membership.objects.get(user=student, is_active=True)
+        offering = ClassOffering.objects.filter(teacher=teacher, is_active=True).first()
+        start = timezone.now() + timedelta(days=6)
+        ClassRequest.objects.create(
+            student=student,
+            teacher=teacher,
+            class_offering=offering,
+            membership=membership,
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            tickets_requested=1,
+            status=ClassRequest.STATUS_APPROVED,
+        )
+        call_command('bootstrap_sandbox', '--demo', '--showcase')
+        self.assertTrue(
+            Membership.objects.filter(user=student, is_active=True, tickets_remaining__gt=0).exists()
+        )
+
 
 class StaffSandboxAuditTests(TestCase):
     """Staff can run the studio from the app: manage the roadmap and add teachers."""
@@ -4253,3 +4277,171 @@ class BranchOpenHoursTests(TestCase):
             **self._auth(self.teacher),
         )
         self.assertEqual(res.status_code, 400)
+
+
+class CatalogToCurriculumLinkTests(TestCase):
+    def test_classes_and_sessions_link_to_tracks_without_touching_cefr(self):
+        from django.apps import apps
+
+        from scheduling.models import (
+            CatalogFocus,
+            CatalogLevel,
+            CatalogSubject,
+            CatalogTopic,
+            CurriculumModule,
+            CurriculumTrack,
+        )
+        from scheduling.services.curriculum_link import link_catalog_to_tracks
+
+        teacher = User.objects.create_user('link_teacher', password='pass')
+        student = User.objects.create_user('link_student', password='pass')
+        plan = MembershipPlan.objects.create(name='Link pass', price_cents=0, ticket_allowance=1)
+        membership = Membership.objects.create(user=student, plan=plan, is_active=True, tickets_remaining=1)
+        subject = CatalogSubject.objects.create(name='Japanese')
+        level = CatalogLevel.objects.create(subject=subject, name='Beginner')
+        focus = CatalogFocus.objects.create(level=level, name='Grammar')
+        CatalogTopic.objects.create(focus=focus, title='Particles', sort_order=0)
+        CatalogTopic.objects.create(focus=focus, title='Verbs', sort_order=1)
+
+        offering = ClassOffering.objects.create(
+            teacher=teacher, subject='Japanese', level='Beginner', focus='Grammar',
+        )
+        topic = ClassTopic.objects.create(class_offering=offering, title='Particles', sort_order=0)
+        ClassTopic.objects.create(class_offering=offering, title='Extra drill', sort_order=2)
+        start = timezone.now() + timedelta(days=1)
+        session = Session.objects.create(
+            teacher=teacher,
+            class_offering=offering,
+            class_topic=topic,
+            title='Particles',
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            capacity=1,
+            status='open',
+        )
+        request = ClassRequest.objects.create(
+            student=student,
+            teacher=teacher,
+            class_offering=offering,
+            class_topic=topic,
+            membership=membership,
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            tickets_requested=1,
+        )
+        stray = ClassOffering.objects.create(
+            teacher=teacher, subject='Korean', level='Beginner', focus='Hangul',
+        )
+        ClassTopic.objects.create(class_offering=stray, title='Vowels', sort_order=0)
+        cefr = CurriculumTrack.objects.create(
+            title='English A1–C2', framework='cefr', subject='English', is_template=True,
+        )
+        CurriculumModule.objects.create(track=cefr, title='Greetings', sort_order=0)
+
+        link_catalog_to_tracks(apps)
+        link_catalog_to_tracks(apps)
+
+        offering.refresh_from_db()
+        session.refresh_from_db()
+        request.refresh_from_db()
+        stray.refresh_from_db()
+        self.assertEqual(offering.track.title, 'Japanese · Beginner · Grammar')
+        self.assertEqual(
+            list(offering.track.modules.order_by('sort_order', 'id').values_list('title', flat=True)),
+            ['Particles', 'Verbs', 'Extra drill'],
+        )
+        self.assertEqual(session.curriculum_module.title, 'Particles')
+        self.assertEqual(request.curriculum_module.title, 'Particles')
+        self.assertEqual(stray.track.title, 'Korean · Beginner · Hangul')
+        self.assertEqual(list(stray.track.modules.values_list('title', flat=True)), ['Vowels'])
+        self.assertEqual(list(cefr.modules.values_list('title', flat=True)), ['Greetings'])
+        self.assertEqual(CurriculumTrack.objects.filter(title='Japanese · Beginner · Grammar').count(), 1)
+
+
+class CurriculumClassAndOpenSessionTests(TestCase):
+    def setUp(self):
+        from scheduling.services.teacher_permissions import ensure_default_permissions
+
+        for name in ('student', 'teacher', 'staff'):
+            Group.objects.get_or_create(name=name)
+        self.teacher = User.objects.create_user('curr_teacher', password='pass')
+        self.teacher.groups.add(Group.objects.get(name='teacher'))
+        ensure_default_permissions(self.teacher)
+        self.student = User.objects.create_user('curr_student', password='pass')
+        self.student.groups.add(Group.objects.get(name='student'))
+        self.outsider = User.objects.create_user('curr_other', password='pass')
+        self.outsider.groups.add(Group.objects.get(name='student'))
+        self.plan = MembershipPlan.objects.create(name='Curr pass', price_cents=0, ticket_allowance=5)
+        for user in (self.student, self.outsider):
+            Membership.objects.create(user=user, plan=self.plan, is_active=True, tickets_remaining=5)
+
+    def _auth(self, user):
+        token = self.client.post(
+            '/api/auth/token/',
+            {'username': user.username, 'password': 'pass'},
+            content_type='application/json',
+        ).json()['access']
+        return {'HTTP_AUTHORIZATION': f'Bearer {token}'}
+
+    def test_create_class_from_track_and_session_from_module(self):
+        from scheduling.models import CurriculumModule, CurriculumTrack
+
+        track = CurriculumTrack.objects.create(title='Studio English', subject='English', is_template=True)
+        module = CurriculumModule.objects.create(track=track, title='Greetings', sort_order=0)
+        res = self.client.post(
+            '/api/teacher/classes/',
+            {'track': track.id, 'default_capacity': 3, 'ticket_cost': 1},
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(res.status_code, 201, res.content)
+        body = res.json()
+        self.assertEqual(body['track'], track.id)
+        self.assertEqual(body['label'], 'Studio English')
+        self.assertFalse(body['is_personalized'])
+        self.assertEqual(body['modules'][0]['title'], 'Greetings')
+
+        start = timezone.now() + timedelta(days=1)
+        session_res = self.client.post(
+            '/api/teacher/sessions/',
+            {
+                'class_offering': body['id'],
+                'curriculum_module_id': module.id,
+                'start_time': start.isoformat(),
+                'end_time': (start + timedelta(hours=1)).isoformat(),
+            },
+            content_type='application/json',
+            **self._auth(self.teacher),
+        )
+        self.assertEqual(session_res.status_code, 201, session_res.content)
+        self.assertEqual(session_res.json()['class_topic'], 'Greetings')
+        self.assertEqual(session_res.json()['curriculum_module'], module.id)
+
+    def test_personalized_open_session_is_hidden_until_enrolled(self):
+        from scheduling.models import CurriculumModule, CurriculumTrack, StudentCurriculum
+        from scheduling.services.classes import apply_track_to_offering
+
+        track = CurriculumTrack.objects.create(title='Kuma only', subject='English', is_template=False)
+        module = CurriculumModule.objects.create(track=track, title='Private drill', sort_order=0)
+        offering = ClassOffering(teacher=self.teacher, default_capacity=2)
+        apply_track_to_offering(offering, track)
+        offering.save()
+        start = timezone.now() + timedelta(days=2)
+        Session.objects.create(
+            teacher=self.teacher,
+            class_offering=offering,
+            curriculum_module=module,
+            title='Private drill',
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            capacity=2,
+            status='open',
+        )
+        hidden = self.client.get('/api/sessions/open/', **self._auth(self.outsider)).json()
+        self.assertEqual(hidden, [])
+        self.assertIsNotNone(booking_block_reason(self.outsider, Session.objects.get(class_offering=offering)))
+
+        StudentCurriculum.objects.create(student=self.student, track=track, is_active=True)
+        shown = self.client.get('/api/sessions/open/', **self._auth(self.student)).json()
+        self.assertEqual(len(shown), 1)
+        self.assertIsNone(booking_block_reason(self.student, Session.objects.get(class_offering=offering)))
